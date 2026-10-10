@@ -7,16 +7,16 @@
 </p>
 
 <p align="center">
-  <strong>폐쇄망을 전제로 만든 브라우저 에이전트</strong>
+  <strong>Claude로 동작하는 기업용 브라우저 에이전트</strong>
   <br/>
-  <sub>클라우드 API 없이도, 망 안의 LLM 서버와 PC에 설치된 Edge/Chrome으로 동작합니다. 말로 시키면 대신 클릭하고 읽어 옵니다.</sub>
+  <sub>처음엔 직접 찾아가고, 다음엔 기억대로 갑니다. Claude가 학습한 적 없는 폐쇄망 사이트에서도 처음에는 화면을 읽으며 길을 찾고, 성공한 경로는 이 기기에 남아 다음 요청부터 그 길로 갑니다. PC에 설치된 Edge/Chrome을 그대로 씁니다.</sub>
 </p>
 
 <p align="center">
   <img alt="Offline install" src="https://img.shields.io/badge/install-offline-0B7285?style=flat-square">
   <img alt="Python 3" src="https://img.shields.io/badge/python-3-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="playwright 1.38+" src="https://img.shields.io/badge/playwright-%3E%3D1.38-2EAD33?style=flat-square">
-  <img alt="LLM: Anthropic Messages API compatible" src="https://img.shields.io/badge/LLM-Anthropic%20Messages%20API%20compatible-555?style=flat-square">
+  <img alt="Runs on Claude (Anthropic Messages API)" src="https://img.shields.io/badge/runs%20on-Claude%20%28Anthropic%20Messages%20API%29-D97757?style=flat-square">
   <img alt="Status: beta" src="https://img.shields.io/badge/status-beta-orange?style=flat-square">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green?style=flat-square"></a>
 </p>
@@ -33,13 +33,14 @@
   <a href="#기여하기">기여</a>
 </p>
 
-인터넷이 막힌 폐쇄망에서는 대개 클라우드 LLM API, `playwright install`, 브라우저 다운로드를 쓸 수 없습니다. nongside는 이 조건을 전제로 만든 브라우저 에이전트입니다.
+폐쇄망은 인터넷이 막혀 있고, 바깥 주소는 대개 회사가 승인한 게이트웨이 하나만 허용됩니다. `playwright install`이나 브라우저 다운로드도 쓸 수 없습니다. nongside는 지정한 주소로만 Claude를 부르므로, 폐쇄망에서는 그 게이트웨이를 가리키면 됩니다.
 
-- **LLM**: 망 안에 띄운 Anthropic Messages API 호환 서버 주소 하나면 됩니다. 공식 SDK 없이 Python 표준 라이브러리(`http.client`)로 호출합니다.
+- **Claude**: Anthropic Messages API로 Claude를 부릅니다. 기본값은 공개 Anthropic API이고, 폐쇄망에서는 회사가 승인한 게이트웨이를 지정합니다. 공식 SDK 없이 Python 표준 라이브러리(`http.client`)로 호출합니다.
 - **브라우저**: PC에 이미 설치된 Edge(또는 Chrome)를 그대로 씁니다. 브라우저 바이너리는 받지 않습니다.
 - **설치**: 필수 패키지는 `playwright` 하나입니다. Windows 기준 의존성을 포함해 휠 4개, 약 37MB를 반입하면 되고 관리자 권한은 필요 없습니다.
-- **모델**: 화면을 글자 목록으로 바꿔 전달하므로, 이미지 입력이 없는 모델도 쓸 수 있도록 설계했습니다. 스크린샷이 필요할 때를 대비해 비전 모델을 따로 지정할 수 있습니다.
-- **데이터**: 에이전트(Python)가 직접 여는 연결은 지정한 LLM 서버와 `127.0.0.1`뿐이고, 사용 통계 수집·업데이트 확인·외부 CDN 호출 코드는 없습니다. 브라우저가 접속하는 곳과 기본값 주의는 [네트워크 경계](#3-네트워크-경계)를 보세요.
+- **기억**: 사이트, 들어가는 길, 통한 단계를 이 기기에 남기고, 다음 요청은 그 길에서 시작합니다. 입력한 값은 저장하지 않습니다.
+- **화면은 글자로**: 매 턴 화면을 요소 목록으로 바꿔 Claude에 전달합니다. 스크린샷은 최후 수단입니다.
+- **데이터**: 에이전트(Python)가 직접 여는 연결은 지정한 Claude 엔드포인트와 `127.0.0.1`뿐이고, 사용 통계 수집·업데이트 확인·외부 CDN 호출 코드는 없습니다. 브라우저가 접속하는 곳과 기본값 주의는 [네트워크 경계](#3-네트워크-경계)를 보세요.
 
 "공지 게시판에서 이번 주 새 글 세 개만 요약해줘", "이 페이지 표를 정리해줘" 같은 요청을 받으면, 에이전트가 페이지의 요소 목록을 읽고 이동·클릭·입력·읽기를 스스로 골라 처리한 뒤 결과를 돌려줍니다.
 
@@ -51,11 +52,10 @@
 
 | 폐쇄망의 제약 | 흔히 막히는 지점 | nongside의 방식 |
 | :--- | :--- | :--- |
-| 외부 LLM API 차단 | 클라우드 API를 전제로 한 도구는 시작도 못 함 | 망 안 LLM 서버 주소만 지정. 외부 인증·SDK 불필요 |
+| 허용된 바깥 주소는 하나뿐 | 여러 클라우드 서비스가 필요한 도구는 화이트리스트에 맞지 않음 | 지정한 주소 하나(공개 API 또는 회사 게이트웨이)로만 Claude 호출. 그 밖의 외부 인증·SDK 불필요 |
 | 인터넷 다운로드 불가 | `playwright install`, 전용 브라우저, 많은 의존성을 반입해야 함 | 설치된 Edge/Chrome 사용. 필수 패키지는 `playwright` 하나 |
-| 텍스트 위주의 내부 모델 | 스크린샷 기반 에이전트는 비전 모델이 필수 | 매 턴 화면을 요소 목록 텍스트로 전달. 스크린샷은 최후 수단, 비전 모델은 선택 |
-| 데이터 반출 금지 | 도구가 어디로 무엇을 보내는지 불분명 | 에이전트가 직접 여는 연결과 LLM 서버로 보내는 내용을 문서로 공개. 브라우저 이동은 망의 접근 통제를 따름 |
-| 검색으로 못 찾는 내부 사이트 | 에이전트가 사이트를 찾지 못해 헤맴 | 사이트 메모리와 플레이북에 내부 사이트 주소·경로를 남겨 재사용 |
+| 데이터 반출 금지 | 도구가 어디로 무엇을 보내는지 불분명 | 에이전트가 직접 여는 연결과 Claude로 보내는 내용을 문서로 공개. 브라우저 이동은 망의 접근 통제를 따름 |
+| Claude가 학습한 적 없고 검색으로도 못 찾는 내부 사이트 | 에이전트가 매번 사이트를 찾지 못해 헤맴 | 처음에는 화면을 읽으며 길을 찾음. 사이트 메모리와 플레이북에 주소와 통한 경로를 남겨 다음 요청은 그 길에서 시작 |
 | 되돌릴 수 없는 클릭 | 발송·삭제·결제가 확인 없이 실행 | 위험 키워드가 있는 클릭·스크립트는 실행 전에 확인. 키워드 기반이라 모든 경우를 막지는 못함 |
 
 ---
@@ -68,7 +68,7 @@
 
 - Python 3.9 이상 <!-- TODO: 3.9 문법으로 파싱되고 3.9.6에서 --selftest 통과 확인. 실제 브라우저 구동까지 테스트한 최소 버전 확인 후 갱신 -->
 - Microsoft Edge 또는 Google Chrome
-- Anthropic Messages API 호환 LLM 서버와 API 키(또는 Bearer 토큰)
+- Claude용 Anthropic API 키, 폐쇄망이면 회사 게이트웨이 주소와 키(또는 Bearer 토큰)
 
 **1. 가상환경과 의존성**
 
@@ -93,18 +93,20 @@ python3 -m venv .venv
 
 `playwright install`은 필요 없습니다. 네이티브 채팅 창을 원하면 `requirements-ui.txt`(pywebview)를 추가로 설치합니다. 설치하지 않으면 채팅 창은 Edge/Chrome의 `--app` 창으로 뜹니다.
 
-**2. LLM 서버와 브라우저 설정**
+**2. Claude와 브라우저 설정**
 
 레포 루트에 `.env` 파일을 만듭니다. `.env`는 `.gitignore`에 들어 있어 커밋되지 않습니다.
 
 ```ini
-# 망 안 LLM 서버 (Anthropic Messages API 호환)
-ANTHROPIC_BASE_URL=http://llm.internal.example:8000
-ANTHROPIC_API_KEY=your-key        # 서버가 인증을 쓰지 않으면 임의의 값
-AGENT_MODEL=your-model-name       # 서버에 올린 모델 이름
+# Claude (Anthropic Messages API)
+ANTHROPIC_API_KEY=your-key
+
+# 폐쇄망에서는 회사가 승인한 게이트웨이를 지정
+# ANTHROPIC_BASE_URL=https://claude-gateway.internal.example
+# AGENT_MODEL=model-name-your-gateway-serves
 ```
 
-`ANTHROPIC_BASE_URL`과 `AGENT_MODEL`의 기본값은 공용 Anthropic API(`https://api.anthropic.com`, `claude-sonnet-4-5`)입니다. 내부 서버를 쓸 때는 두 값을 반드시 지정하세요.
+`ANTHROPIC_BASE_URL`과 `AGENT_MODEL`의 기본값은 공용 Anthropic API(`https://api.anthropic.com`, `claude-sonnet-4-5`)입니다. 폐쇄망에서는 두 값을 게이트웨이 주소와 게이트웨이가 제공하는 모델 이름으로 지정하세요.
 
 **Edge가 없는 환경(대부분의 macOS, Linux)에서는 `.env`에 `AGENT_CHANNEL=chrome`을 꼭 넣으세요.** 기본값이 `msedge`이고 자동으로 Chrome으로 바꾸지 않으므로, 없으면 `Chromium distribution 'msedge' is not found` 오류로 시작하지 못합니다. 이 오류가 권하는 `playwright install msedge`는 필요 없습니다.
 
@@ -560,7 +562,7 @@ MIT. [LICENSE](LICENSE)를 참고하세요.
 ---
 
 <p align="center">
-  <em>폐쇄망을 전제로 만든 브라우저 에이전트</em>
+  <em>Claude로 동작하는 기업용 브라우저 에이전트</em>
   <br/>
-  <sub>망 안의 LLM 서버와 이미 설치된 브라우저로.</sub>
+  <sub>처음엔 직접 찾아가고, 다음엔 기억대로 갑니다.</sub>
 </p>
