@@ -73,7 +73,7 @@
 **1. 가상환경과 의존성**
 
 ```sh
-git clone https://github.com/bamtang/nongside.git
+git clone https://github.com/SunnyJLab/nongside.git
 cd nongside
 ```
 
