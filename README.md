@@ -73,7 +73,7 @@ What you need
 **1. Virtual environment and dependencies**
 
 ```sh
-git clone https://github.com/bamtang/nongside.git
+git clone https://github.com/SunnyJLab/nongside.git
 cd nongside
 ```
 
