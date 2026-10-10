@@ -1,7 +1,7 @@
 # AGENTS.md: nongside 기여 규칙
 
 ## 프로젝트
-nongside는 설치된 Edge 또는 Chrome을 Playwright persistent profile로 실행하거나 CDP 브라우저에 연결하고, LLM이 `dom.js`가 수집한 인터랙티브 요소 목록을 바탕으로 도구를 선택해 조작하는 브라우저 에이전트입니다. LLM 호출은 `llm.py`에서 Anthropic Messages API 호환 엔드포인트로 전송합니다. 필수 외부 의존성은 `playwright` 하나이며, 선택 의존성 `pywebview`를 설치하지 않으면 브라우저 앱 창을 UI로 사용합니다. 자세한 사용법은 `README.md`를 참고하세요.
+nongside는 설치된 Edge 또는 Chrome을 Playwright persistent profile로 실행하거나 CDP 브라우저에 연결하고, LLM이 `dom.js`가 수집한 인터랙티브 요소 목록을 바탕으로 도구를 선택해 조작하는 브라우저 에이전트입니다. LLM 호출은 `llm.py`에서 Anthropic Messages API 호환 엔드포인트로 전송합니다. 필수 외부 의존성은 `playwright` 하나이며, 선택 의존성 `pywebview`를 설치하지 않으면 브라우저 앱 창을 UI로 사용합니다. 자세한 사용법은 `README.md`(영문) 또는 `README.ko.md`(한국어)를 참고하세요.
 
 ## 디렉터리 맵
 ```
@@ -14,7 +14,8 @@ memory.py            사이트 메모리 저장 및 주입
 webui.py             채팅 UI 및 로컬 브리지
 requirements.txt     필수 의존성
 requirements-ui.txt  선택 UI 의존성 (주석은 ASCII만 사용)
-README.md            사용자 문서
+README.md            사용자 문서 (영문, 기본)
+README.ko.md         사용자 문서 (한국어)
 AGENTS.md            기여자 및 코딩 에이전트 규칙
 LICENSE              MIT 라이선스
 .gitignore           공개 저장소 제외 규칙

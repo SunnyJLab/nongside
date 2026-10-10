@@ -1,11 +1,15 @@
-<!-- TODO: 데모 GIF를 만들면 assets/ 에 두고 히어로 아래에 "설명 | GIF" 표로 삽입 -->
+<!-- TODO: Once you have a demo GIF, put it in assets/ and insert a "description | GIF" table under the hero -->
 
 <h1 align="center">nongside</h1>
 
 <p align="center">
-  <strong>폐쇄망을 전제로 만든 브라우저 에이전트</strong>
+  <b>English</b> · <a href="README.ko.md">한국어</a>
+</p>
+
+<p align="center">
+  <strong>A browser agent built for air-gapped (closed) networks</strong>
   <br/>
-  <sub>클라우드 API 없이도, 망 안의 LLM 서버와 PC에 설치된 Edge/Chrome으로 동작합니다. 말로 시키면 대신 클릭하고 읽어 옵니다.</sub>
+  <sub>It runs without a cloud API, using an LLM server inside your network and the Edge or Chrome already installed on the PC. Tell it what you need in plain language, and it clicks and reads for you.</sub>
 </p>
 
 <p align="center">
@@ -18,55 +22,55 @@
 </p>
 
 <p align="center">
-  <a href="#왜-nongside인가">왜</a> ·
-  <a href="#빠른-시작">빠른 시작</a> ·
-  <a href="#폐쇄망-배포">폐쇄망 배포</a> ·
-  <a href="#주요-기능">기능</a> ·
-  <a href="#사용법">사용법</a> ·
-  <a href="#설정">설정</a> ·
-  <a href="#사이트-메모리">사이트 메모리</a> ·
-  <a href="#보안과-한계">보안과 한계</a> ·
-  <a href="#기여하기">기여</a>
+  <a href="#why-nongside">Why</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#air-gapped-deployment">Air-gapped deployment</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#site-memory">Site memory</a> ·
+  <a href="#security-and-limitations">Security</a> ·
+  <a href="#contributing">Contributing</a>
 </p>
 
-인터넷이 막힌 폐쇄망에서는 대개 클라우드 LLM API, `playwright install`, 브라우저 다운로드를 쓸 수 없습니다. nongside는 이 조건을 전제로 만든 브라우저 에이전트입니다.
+On an air-gapped network with the internet blocked, you usually cannot use a cloud LLM API, `playwright install`, or a browser download. nongside is a browser agent built for that constraint.
 
-- **LLM**: 망 안에 띄운 Anthropic Messages API 호환 서버 주소 하나면 됩니다. 공식 SDK 없이 Python 표준 라이브러리(`http.client`)로 호출합니다.
-- **브라우저**: PC에 이미 설치된 Edge(또는 Chrome)를 그대로 씁니다. 브라우저 바이너리는 받지 않습니다.
-- **설치**: 필수 패키지는 `playwright` 하나입니다. Windows 기준 의존성을 포함해 휠 4개, 약 37MB를 반입하면 되고 관리자 권한은 필요 없습니다.
-- **모델**: 화면을 글자 목록으로 바꿔 전달하므로, 이미지 입력이 없는 모델도 쓸 수 있도록 설계했습니다. 스크린샷이 필요할 때를 대비해 비전 모델을 따로 지정할 수 있습니다.
-- **데이터**: 에이전트(Python)가 직접 여는 연결은 지정한 LLM 서버와 `127.0.0.1`뿐이고, 사용 통계 수집·업데이트 확인·외부 CDN 호출 코드는 없습니다. 브라우저가 접속하는 곳과 기본값 주의는 [네트워크 경계](#3-네트워크-경계)를 보세요.
+- **LLM**: One URL for an Anthropic Messages API compatible server running inside your network is enough. It calls the server with the Python standard library (`http.client`), with no official SDK.
+- **Browser**: It uses the Edge (or Chrome) already installed on the PC. It does not download a browser binary.
+- **Install**: The only required package is `playwright`. On Windows, you bring in 4 wheels including dependencies, about 37MB in total. No administrator rights are needed.
+- **Model**: It turns the screen into a text list before sending it, so it is designed to work with models that have no image input. You can set a separate vision model for when a screenshot is needed.
+- **Data**: The only connections the agent (Python) opens itself are the LLM server you set and `127.0.0.1`. There is no code that collects usage stats, checks for updates, or calls an external CDN. For where the browser connects, and the caveat about defaults, see [Network boundaries](#3-network-boundaries).
 
-"공지 게시판에서 이번 주 새 글 세 개만 요약해줘", "이 페이지 표를 정리해줘" 같은 요청을 받으면, 에이전트가 페이지의 요소 목록을 읽고 이동·클릭·입력·읽기를 스스로 골라 처리한 뒤 결과를 돌려줍니다.
+Ask it something like "Summarize just the three new posts on the notice board this week" or "Organize the table on this page." The agent reads the page's element list, chooses navigation, clicks, typing, and reading on its own, then returns the result.
 
-> 실제 업무에서 운영 중인 제품이며, 현재 beta입니다. 기능과 설정은 바뀔 수 있고 사이트 구조나 모델에 따라 실패할 수 있으니, 중요한 작업은 결과를 직접 확인하세요.
+> nongside is used for real work and is currently in beta. Features and settings can change, and it can fail depending on the site structure or the model. For anything important, check the result yourself.
 
 ---
 
-## 왜 nongside인가
+## Why nongside
 
-| 폐쇄망의 제약 | 흔히 막히는 지점 | nongside의 방식 |
+| Constraint on an air-gapped network | Where tools usually get stuck | How nongside does it |
 | :--- | :--- | :--- |
-| 외부 LLM API 차단 | 클라우드 API를 전제로 한 도구는 시작도 못 함 | 망 안 LLM 서버 주소만 지정. 외부 인증·SDK 불필요 |
-| 인터넷 다운로드 불가 | `playwright install`, 전용 브라우저, 많은 의존성을 반입해야 함 | 설치된 Edge/Chrome 사용. 필수 패키지는 `playwright` 하나 |
-| 텍스트 위주의 내부 모델 | 스크린샷 기반 에이전트는 비전 모델이 필수 | 매 턴 화면을 요소 목록 텍스트로 전달. 스크린샷은 최후 수단, 비전 모델은 선택 |
-| 데이터 반출 금지 | 도구가 어디로 무엇을 보내는지 불분명 | 에이전트가 직접 여는 연결과 LLM 서버로 보내는 내용을 문서로 공개. 브라우저 이동은 망의 접근 통제를 따름 |
-| 검색으로 못 찾는 내부 사이트 | 에이전트가 사이트를 찾지 못해 헤맴 | 사이트 메모리와 플레이북에 내부 사이트 주소·경로를 남겨 재사용 |
-| 되돌릴 수 없는 클릭 | 발송·삭제·결제가 확인 없이 실행 | 위험 키워드가 있는 클릭·스크립트는 실행 전에 확인. 키워드 기반이라 모든 경우를 막지는 못함 |
+| External LLM APIs blocked | Tools built around a cloud API cannot even start | Set only the in-network LLM server URL. No external auth or SDK |
+| No internet downloads | You have to transfer in `playwright install`, a dedicated browser, and many dependencies | Uses the installed Edge/Chrome. The only required package is `playwright` |
+| Text-oriented internal models | Screenshot-based agents require a vision model | Each turn it sends the screen as element-list text. Screenshots are a last resort; a vision model is optional |
+| Data must not leave the network | Unclear where a tool sends what | Documents the connections the agent opens itself and what it sends to the LLM server. Browser navigation follows the network's access controls |
+| Internal sites that search cannot find | The agent cannot find the site and wanders | Site memory and the site playbook store internal site URLs and paths for reuse |
+| Clicks you cannot undo | Sends, deletes, and payments run without confirmation | Clicks and scripts that match danger keywords ask for confirmation before they run. Because it is keyword-based, it cannot block every case |
 
 ---
 
-## 빠른 시작
+## Quick start
 
-인터넷이 되는 PC에서 먼저 써 보는 순서입니다. 폐쇄망 PC에 설치하는 방법은 [폐쇄망 배포](#폐쇄망-배포)를 보세요.
+These steps are for trying it out first on a PC with internet access. To install on an air-gapped PC, see [Air-gapped deployment](#air-gapped-deployment).
 
-필요한 것
+What you need
 
-- Python 3.9 이상 <!-- TODO: 3.9 문법으로 파싱되고 3.9.6에서 --selftest 통과 확인. 실제 브라우저 구동까지 테스트한 최소 버전 확인 후 갱신 -->
-- Microsoft Edge 또는 Google Chrome
-- Anthropic Messages API 호환 LLM 서버와 API 키(또는 Bearer 토큰)
+- Python 3.9 or later <!-- TODO: Parses as 3.9 syntax, and --selftest passes on 3.9.6. Update after confirming the minimum version tested through an actual browser launch -->
+- Microsoft Edge or Google Chrome
+- An Anthropic Messages API compatible LLM server and an API key (or a Bearer token)
 
-**1. 가상환경과 의존성**
+**1. Virtual environment and dependencies**
 
 ```sh
 git clone https://github.com/bamtang/nongside.git
@@ -87,372 +91,371 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-`playwright install`은 필요 없습니다. 네이티브 채팅 창을 원하면 `requirements-ui.txt`(pywebview)를 추가로 설치합니다. 설치하지 않으면 채팅 창은 Edge/Chrome의 `--app` 창으로 뜹니다.
+You do not need `playwright install`. If you want a native chat window, also install `requirements-ui.txt` (pywebview). If you do not, the chat window opens as an Edge/Chrome `--app` window.
 
-**2. LLM 서버와 브라우저 설정**
+**2. LLM server and browser settings**
 
-레포 루트에 `.env` 파일을 만듭니다. `.env`는 `.gitignore`에 들어 있어 커밋되지 않습니다.
+Create a `.env` file at the repo root. `.env` is listed in `.gitignore`, so it is not committed.
 
 ```ini
-# 망 안 LLM 서버 (Anthropic Messages API 호환)
+# In-network LLM server (Anthropic Messages API compatible)
 ANTHROPIC_BASE_URL=http://llm.internal.example:8000
-ANTHROPIC_API_KEY=your-key        # 서버가 인증을 쓰지 않으면 임의의 값
-AGENT_MODEL=your-model-name       # 서버에 올린 모델 이름
+ANTHROPIC_API_KEY=your-key        # any value if the server does not use auth
+AGENT_MODEL=your-model-name       # name of the model loaded on the server
 ```
 
-`ANTHROPIC_BASE_URL`과 `AGENT_MODEL`의 기본값은 공용 Anthropic API(`https://api.anthropic.com`, `claude-sonnet-4-5`)입니다. 내부 서버를 쓸 때는 두 값을 반드시 지정하세요.
+The defaults for `ANTHROPIC_BASE_URL` and `AGENT_MODEL` are the public Anthropic API (`https://api.anthropic.com`, `claude-sonnet-4-5`). When you use an internal server, set both.
 
-**Edge가 없는 환경(대부분의 macOS, Linux)에서는 `.env`에 `AGENT_CHANNEL=chrome`을 꼭 넣으세요.** 기본값이 `msedge`이고 자동으로 Chrome으로 바꾸지 않으므로, 없으면 `Chromium distribution 'msedge' is not found` 오류로 시작하지 못합니다. 이 오류가 권하는 `playwright install msedge`는 필요 없습니다.
+**On machines without Edge (most macOS and Linux), you must put `AGENT_CHANNEL=chrome` in `.env`.** The default is `msedge`, and it does not switch to Chrome on its own. Without Edge it fails to start with `Chromium distribution 'msedge' is not found`. You do not need the `playwright install msedge` that error suggests.
 
-**3. 실행**
+**3. Run**
 
-레포 루트에서 실행합니다. 전용 브라우저 프로필은 **실행한 폴더**의 `.edge-profile`에 생기므로, 다른 폴더에서 실행하면 로그인이 사라진 것처럼 보입니다.
+Run it from the repo root. The dedicated browser profile is created at `.edge-profile` in **the folder you ran from**, so if you run it from another folder, your logins will appear to be gone.
 
 ```sh
 # Windows
 .venv\Scripts\python main.py
-.venv\Scripts\python main.py "공지 게시판에서 이번 주 새 글 알려줘"   # 첫 메시지를 바로 실행
+.venv\Scripts\python main.py "Tell me the new posts on the notice board this week"   # run the first message immediately
 
 # macOS / Linux
 .venv/bin/python main.py
-.venv/bin/python main.py --cli                                      # 터미널 대화 모드
+.venv/bin/python main.py --cli                                      # terminal conversation mode
 ```
 
-채팅 창과 에이전트용 브라우저 창이 뜨면 대화를 시작하면 됩니다. 에이전트 브라우저에서 자주 쓰는 사이트에 한 번 로그인해 두면 전용 프로필에 세션이 남아 다음 실행부터 재사용됩니다.
+Once the chat window and the agent browser window open, start the conversation. Log in once, in the agent browser, to the sites you use often. The session stays in the dedicated profile and is reused from the next run.
 
-키나 주소가 틀려도 브라우저는 뜹니다. 첫 요청에 `LLM HTTP 401` 같은 오류가 나오면 `.env`를 확인하세요. 채팅 창 상단 설정 버튼에서 실제로 쓰이는 엔드포인트와 키(끝 4자리), 각 값의 출처를 볼 수 있습니다.
+The browser still opens if the key or the URL is wrong. If the first request returns an error such as `LLM HTTP 401`, check `.env`. The settings button at the top of the chat window shows the endpoint actually in use, the key (last 4 characters), and the source of each value.
 
-코드가 깨지지 않았는지만 빠르게 보려면 LLM과 브라우저 없이 도는 자체 테스트를 실행합니다. playwright 설치 여부는 확인하지 않습니다.
+To quickly check that the code itself is not broken, run the self-test. It runs with no LLM and no browser. It does not check whether playwright is installed.
 
 ```sh
 .venv/bin/python main.py --selftest      # Windows: .venv\Scripts\python main.py --selftest
-                                         # "selftest ok"가 나오면 정상
+                                         # "selftest ok" means it is fine
 ```
 
 ---
 
-## 폐쇄망 배포
+## Air-gapped deployment
 
-### 1. 오프라인 설치
+### 1. Offline installation
 
-인터넷이 되는 PC에서 패키지를 내려받아 반입합니다. 휠은 대상 PC의 OS와 Python 버전에 맞아야 합니다. 최신 playwright는 Python 3.10 이상을 요구하므로, 3.9 PC용을 받으면 그에 맞는 이전 버전이 받아집니다.
+Download the packages on a PC with internet, then transfer them into the network. Wheels must match the target PC's OS and Python version. The latest playwright requires Python 3.10 or later, so if you download for a Python 3.9 PC, pip picks an older compatible version.
 
 ```powershell
-# 1) 인터넷 PC: 대상 환경을 지정해 휠을 내려받는다 (예: Windows x64, Python 3.12)
+# 1) Internet PC: download wheels for the target environment (example: Windows x64, Python 3.12)
 python -m pip download -r requirements.txt -d wheels --only-binary=:all: --platform win_amd64 --python-version 3.12
 
-# 2) 소스 폴더와 wheels 폴더를 반입한 뒤, 폐쇄망 PC에서
+# 2) After transferring the source folder and the wheels folder into the network, on the air-gapped PC
 python -m venv .venv
 .venv\Scripts\pip install --no-index --find-links wheels -r requirements.txt
 ```
 
-반입 목록 (Windows x64, Python 3.12 기준 실측)
+What you transfer in (measured on Windows x64, Python 3.12)
 
-| 파일 | 크기 | 비고 |
+| File | Size | Notes |
 | :--- | ---: | :--- |
-| 소스 (`*.py` 7개, `dom.js`, `requirements*.txt`) | 약 0.3MB | |
-| `playwright-*-win_amd64.whl` | 약 37MB | Node.js 실행 파일 `playwright/driver/node.exe`(압축 해제 시 약 94MB) 포함 |
-| `greenlet`, `pyee`, `typing_extensions` | 약 0.4MB | |
+| Source (7 `*.py` files, `dom.js`, `requirements*.txt`) | about 0.3MB | |
+| `playwright-*-win_amd64.whl` | about 37MB | Includes the Node.js executable `playwright/driver/node.exe` (about 94MB uncompressed) |
+| `greenlet`, `pyee`, `typing_extensions` | about 0.4MB | |
 
-- 버전과 크기는 받는 시점에 따라 달라집니다. 반입 전 `wheels` 폴더 목록을 확인하세요.
-- 대상 PC에 Python이 없으면 Python 설치 파일도 함께 반입해야 합니다. <!-- TODO: embeddable Python으로 설치 없이 쓰는 방법 검토 -->
-- `playwright install`은 실행하지 않습니다. 브라우저는 PC에 설치된 Edge/Chrome을 씁니다.
-- 관리자 권한은 필요 없습니다. 가상환경과 패키지는 사용자 폴더에 설치되고, 서비스나 레지스트리를 등록하지 않습니다. 다만 실행 파일 허용 목록을 쓰는 PC에서는 가상환경의 `python.exe`와 playwright에 포함된 `node.exe` 실행 허용이 필요할 수 있습니다.
-- 폐쇄망에서는 `requirements-ui.txt`(pywebview)를 건너뛰는 것을 권장합니다. 없으면 채팅 창이 Edge `--app` 창으로 떠서 추가 런타임이 필요 없습니다. pywebview는 Windows에서 [WebView2 Runtime과 .NET(pythonnet)이 필요](https://pywebview.flowrl.com/guide/web_engine)하고, 의존성 중 소스 배포만 있는 패키지(`proxy_tools`)가 있어 오프라인 설치가 번거롭습니다.
+- Versions and sizes change depending on when you download. Check the `wheels` folder listing before you transfer it in.
+- If the target PC has no Python, transfer a Python installer as well. <!-- TODO: Look into running with embeddable Python so no install is required -->
+- Do not run `playwright install`. The browser is the Edge or Chrome installed on the PC.
+- Administrator rights are not required. The virtual environment and packages install in the user folder, and it does not register a service or registry entries. On a PC that uses an executable allowlist, you may need to allow `python.exe` from the virtual environment and the `node.exe` bundled with playwright.
+- On an air-gapped network, skip `requirements-ui.txt` (pywebview). Without it, the chat window opens as an Edge `--app` window and needs no extra runtime. On Windows, pywebview [needs the WebView2 Runtime and .NET (pythonnet)](https://pywebview.flowrl.com/guide/web_engine), and one dependency (`proxy_tools`) is published only as a source distribution, which makes an offline install awkward.
 
-### 2. 내부 LLM 서버 연결
+### 2. Connecting an internal LLM server
 
-에이전트는 `{ANTHROPIC_BASE_URL}/v1/messages`로 Anthropic Messages API 형식 요청을 보냅니다. 서버가 다음을 지원해야 합니다.
+The agent sends Anthropic Messages API requests to `{ANTHROPIC_BASE_URL}/v1/messages`. The server must support the following.
 
-| 항목 | 내용 |
+| Item | Requirement |
 | :--- | :--- |
-| 엔드포인트 | `POST /v1/messages`, 스트리밍 없이 한 번에 응답 |
-| 도구 호출 | 요청의 `tools` 정의, 응답의 `tool_use` 블록, 다음 요청의 `tool_result` 블록. **필수입니다.** 도구 호출 없이 텍스트만 오면 한 번 재촉한 뒤 그 텍스트를 답으로 돌려주고 브라우저는 조작하지 않습니다 |
-| 시스템 프롬프트 | `system`을 텍스트 블록 배열로 보냄 |
-| 헤더 | `x-api-key`와 `Authorization: Bearer`(같은 키), `anthropic-version: 2023-06-01` |
-| 기타 필드 | 프롬프트 캐시용 `cache_control`을 함께 보냄. 서버가 이 필드를 거부하지 않아야 함 |
-| 이미지 | 스크린샷을 쓸 때만 base64 JPEG 이미지 블록 |
+| Endpoint | `POST /v1/messages`, one response with no streaming |
+| Tool use | `tools` definitions on the request, `tool_use` blocks on the response, and `tool_result` blocks on the next request. **Required.** If only text comes back with no tool call, the agent nudges the model once, then returns that text as the answer and does not drive the browser |
+| System prompt | Sends `system` as an array of text blocks |
+| Headers | `x-api-key` and `Authorization: Bearer` (the same key), `anthropic-version: 2023-06-01` |
+| Other fields | Also sends `cache_control` for prompt caching. The server must not reject this field |
+| Images | A base64 JPEG image block only when a screenshot is used |
 
-서버를 고르는 방법
+How to pick a server
 
-- [vLLM](https://github.com/vllm-project/vllm/issues/21313)(`/v1/messages`를 지원하는 버전)과 [Ollama](https://github.com/ollama/ollama/blob/main/docs/api/anthropic-compatibility.mdx)는 `/v1/messages`를 직접 제공합니다.
-- OpenAI 호환 API만 있는 서버는 [LiteLLM](https://docs.litellm.ai/docs/anthropic_unified) 같은 게이트웨이를 앞에 두어 `/v1/messages` 형식으로 받을 수 있습니다.
-- 어느 쪽이든 쓰는 버전에서 도구 호출, `system` 블록 배열, `cache_control` 필드 처리를 함께 확인하세요.
+- [vLLM](https://github.com/vllm-project/vllm/issues/21313) (a version that supports `/v1/messages`) and [Ollama](https://github.com/ollama/ollama/blob/main/docs/api/anthropic-compatibility.mdx) serve `/v1/messages` directly.
+- A server that only has an OpenAI-compatible API can sit behind a gateway such as [LiteLLM](https://docs.litellm.ai/docs/anthropic_unified) and accept the `/v1/messages` format.
+- Either way, on the version you run, check tool use, the `system` block array, and `cache_control` handling together.
 
-> **검증 상태**: 이 README 작성 시점에 실제 동작을 확인한 조합은 <!-- TODO: 실제 확인한 모델·서버 기입 -->뿐입니다. vLLM, Ollama, LiteLLM을 거친 오픈 모델 조합은 아직 검증 결과가 없습니다. 써 본 조합을 이슈로 알려 주시면 표에 추가합니다.
+> **Verification status**: As of writing this README, the only combination whose behavior was actually confirmed is <!-- TODO: fill in the model and server that were actually checked -->. There are no verification results yet for open-model combinations going through vLLM, Ollama, or LiteLLM. If you have tried a combination, open an issue and it will be added to the table.
 
-<!-- TODO: 검증한 모델·서버 조합 표 (모델, 서버, 도구 호출, 비전, 비고) -->
+<!-- TODO: Table of verified model and server combinations (model, server, tool use, vision, notes) -->
 
-모델을 고를 때
+When picking a model
 
-- **도구 호출을 안정적으로 하는 모델**이어야 합니다. 매 스텝 도구를 골라 호출하는 구조입니다.
-- 시스템 프롬프트와 도구 설명이 **한국어**라 한국어 지시를 잘 따르는 모델이 유리합니다.
-- 시스템 프롬프트와 도구 정의만 약 1만 1천 자이고, 매 턴 요소 목록(최대 300개)과 추출한 페이지 텍스트(최대 6천 자)가 더해집니다. 컨텍스트가 넉넉한 모델을 권장합니다.
-- 응답 최대 토큰 기본값은 `16384`입니다. 서버가 컨텍스트 길이를 넘는다며 거부하면 `AGENT_MAX_TOKENS`를 낮추세요.
-- 메인 모델이 이미지를 받지 못하면 `AGENT_VISION_MODEL`로 비전 모델을 따로 지정하세요. 지정하지 않으면 스크린샷이 메인 모델에 이미지로 그대로 전달되고, 이미지를 받지 못하는 서버는 오류를 낼 수 있습니다. 현재 스크린샷 도구를 끄는 설정은 없습니다. 비전 모델도 서버의 `/v1/messages` 이미지 입력 지원을 먼저 확인하세요. <!-- TODO: 스크린샷 비활성화 옵션 -->
+- It must be **a model that calls tools reliably**. Each step it picks a tool and calls it.
+- The system prompt and tool descriptions are **in Korean**, so a model that follows Korean instructions well has an advantage.
+- The system prompt and tool definitions alone are about 11,000 characters, and each turn adds the element list (up to 300 items) and extracted page text (up to 6,000 characters). A model with a generous context is recommended.
+- The default maximum response tokens is `16384`. If the server rejects the request because it exceeds the context length, lower `AGENT_MAX_TOKENS`.
+- If the main model cannot accept images, set a separate vision model with `AGENT_VISION_MODEL`. If you do not, screenshots are passed to the main model as images, and a server that cannot accept images may error. There is currently no setting that turns off the screenshot tool. For the vision model too, first confirm that the server's `/v1/messages` supports image input. <!-- TODO: option to disable screenshots -->
 
-### 3. 네트워크 경계
+### 3. Network boundaries
 
-요약: 페이지 내용은 브라우저 → 에이전트(Python) → 지정한 LLM 서버로만 갑니다. 에이전트가 따로 수집·전송하는 사용 통계는 없습니다.
+Summary: page content goes only from the browser to the agent (Python) to the LLM server you set. The agent does not separately collect or send usage stats.
 
-| 연결 | 대상 | 용도 |
+| Connection | Target | Purpose |
 | :--- | :--- | :--- |
-| LLM 호출 (Python) | `ANTHROPIC_BASE_URL` | 요청, 페이지 텍스트, 스크린샷 전송 |
-| 디버그 포트 확인 (Python) | `127.0.0.1:{AGENT_CDP_PORT}` | 띄워 둔 브라우저에 attach |
-| 채팅 창 서버 (Python) | `127.0.0.1` 임의 포트 | pywebview가 없을 때만. 토큰 인증 로컬 서버 |
-| 브라우저 이동 | 모델이 고른 URL | 에이전트 브라우저가 접속. 접근 범위는 망의 방화벽·프록시 정책을 따름 |
+| LLM call (Python) | `ANTHROPIC_BASE_URL` | Sends the request, page text, and screenshots |
+| Debug port check (Python) | `127.0.0.1:{AGENT_CDP_PORT}` | Attach to a browser you already started |
+| Chat window server (Python) | an arbitrary port on `127.0.0.1` | Only when pywebview is absent. A local server with token auth |
+| Browser navigation | the URL the model picks | The agent browser connects. Reach follows the network's firewall and proxy policy |
 
-- `.env`와 환경변수에 `ANTHROPIC_BASE_URL`이 없고 `~/.claude/settings.json`도 없으면, 기본값인 공용 Anthropic API(`https://api.anthropic.com`)로 요청을 보내려 합니다. 폐쇄망에서는 연결 실패로 끝나지만, 외부로 나가는 경로가 있는 환경이라면 반드시 내부 주소를 지정하세요.
-- 브라우저는 에이전트가 이동한 사이트에 접속합니다. 처음 보는 사이트의 이름을 정할 때 그 사이트의 홈(`/`) 제목도 읽습니다.
-- 채팅 창은 HTML·스크립트·아이콘이 코드에 내장돼 있어 외부 CDN이나 웹폰트를 불러오지 않습니다. 단, 현재 탭 칩의 파비콘은 그 사이트에서 불러옵니다.
-- LLM 호출은 HTTP 프록시 환경변수(`HTTP_PROXY` 등)를 쓰지 않습니다. 이 PC에서 LLM 서버에 직접 닿아야 합니다.
-- `http://` 주소도 그대로 씁니다. `https://`는 Python 기본 인증서 검증을 씁니다. Windows에서는 시스템 인증서 저장소를 읽으므로 조직 내부 CA가 Windows에 설치돼 있으면 그대로 동작하고, 다른 OS에서는 `SSL_CERT_FILE`로 CA 파일을 지정합니다.
-- 브라우저 자체의 업데이트·동기화·진단 데이터 전송에는 에이전트가 관여하지 않으며, 조직의 브라우저 정책을 따릅니다.
-- `~/.claude/settings.json`이 있으면 그 안의 엔드포인트를 대체 설정으로 읽습니다. 의도한 서버로 가는지 설정 화면에서 확인하세요.
+- If `ANTHROPIC_BASE_URL` is set in neither `.env` nor the environment, and `~/.claude/settings.json` is also missing, it tries to send requests to the default public Anthropic API (`https://api.anthropic.com`). On an air-gapped network that ends in a connection failure, but if the machine has a path out, you must set an internal address.
+- The browser connects to the sites the agent navigates to. When naming a site it has not seen before, it also reads the title of that site's home (`/`).
+- The chat window has its HTML, scripts, and icons embedded in the code, so it does not load an external CDN or web fonts. The favicon on the current-tab chip is loaded from that site.
+- LLM calls do not use HTTP proxy environment variables (`HTTP_PROXY` and others). This PC must reach the LLM server directly.
+- `http://` addresses are used as-is. `https://` uses Python's default certificate verification. On Windows it reads the system certificate store, so an organizational internal CA installed in Windows works as-is. On other operating systems, set `SSL_CERT_FILE` to the CA file.
+- The agent does not take part in the browser's own update, sync, or diagnostic-data sending. Those follow your organization's browser policy.
+- If `~/.claude/settings.json` exists, it reads the endpoint inside as a fallback setting. Check the settings screen to confirm traffic goes to the server you intended.
 
-### 4. 내부 사이트 길잡이
+### 4. Helping the agent find internal sites
 
-인터넷 검색이 안 되는 망에서는 에이전트가 사이트 이름만으로 주소를 찾기 어렵습니다.
+On a network where internet search does not work, the agent has a hard time finding a URL from a site name alone.
 
-- **요청에 주소를 함께 주세요.** `공지게시판(https://portal.example.internal/notice)에서 새 글 알려줘`처럼 띄어쓰기 없는 이름 바로 뒤 괄호에 주소를 붙이면, 처음 간 사이트를 그 이름으로 기억합니다.
-- **[사이트 메모리](#사이트-메모리)** 가 한 번 성공한 경로를 저장하므로, 같은 사이트의 같은 작업은 다음부터 바로 찾아갑니다.
-- **사이트 플레이북**: 소스 폴더에 `_local/sites.md`를 만들어 내부 사이트 주소와 메뉴 구조를 적어 두면 매 요청 시스템 프롬프트에 붙습니다.
+- **Include the URL in the request.** Put the URL in parentheses right after a site name that has no spaces, as in `Show me new posts on NoticeBoard(https://portal.example.internal/notice)`. The agent then remembers a site it visits for the first time under that name.
+- **[Site memory](#site-memory)** stores a path once it has succeeded, so the same task on the same site is found directly from the next time.
+- **Site playbook**: Create `_local/sites.md` in the source folder and write internal site URLs and menu structure there. It is appended to the system prompt on every request.
 
-> 알아 둘 점: 현재 시스템 프롬프트에는 "기억에 없는 사이트 이름은 네이버 검색으로 찾으라"는 규칙이 있습니다. 인터넷이 없는 망에서는 이 단계가 실패하므로, 위 방법으로 주소를 미리 알려 주는 것이 좋습니다.
+> Worth knowing: the current system prompt has a rule that says to look up a site name it does not remember with a Naver search ("기억에 없는 사이트 이름은 네이버 검색으로 찾으라"). On a network with no internet this step fails, so it is better to give the URL ahead of time using the methods above.
 
-<!-- TODO: 폐쇄망 모드에서 검색 규칙을 끄거나 내부 검색 주소로 바꾸는 설정 추가 -->
+<!-- TODO: Add a setting that, in air-gapped mode, turns off the search rule or replaces it with an internal search URL -->
 
-### 5. Windows PC 환경 대응
+### 5. Windows PC considerations
 
-- 기본 브라우저 채널이 Edge(`msedge`)라, Edge가 설치된 Windows PC에서는 브라우저 관련 설정을 따로 하지 않아도 됩니다.
-- 보안 소프트웨어가 헤드리스 브라우저를 막는 경우를 고려해, 백그라운드 작업은 헤드리스 대신 일반 창을 화면 밖에 띄우는 방식을 씁니다.
-- PowerShell 5.1이 만든 UTF-16 `.env` 파일을 읽고, Windows 콘솔(cp949)에서도 한글이 깨지지 않게 출력합니다.
+- The default browser channel is Edge (`msedge`), so a Windows PC with Edge installed needs no extra browser settings.
+- Because security software sometimes blocks a headless browser, background work opens a normal window off-screen instead of using headless mode.
+- It reads UTF-16 `.env` files created by PowerShell 5.1, and it prints Korean so that it is not garbled on the Windows console (cp949).
 
-### 6. 보안 검토용 요약
+### 6. Summary for security review
 
-| 항목 | 내용 |
+| Item | Details |
 | :--- | :--- |
-| 실행 프로세스 | Python, playwright 드라이버(`node.exe`), Edge/Chrome(에이전트용과 백그라운드용 각 1개까지, pywebview가 없으면 채팅 창용 1개 추가) |
-| 수신 대기 포트 | pywebview가 없을 때만 `127.0.0.1` 임의 포트 1개(토큰 인증). CDP attach를 쓰면 사용자가 연 디버그 포트(기본 9222, 인증 없음) |
-| 외부 연결 | 위 [네트워크 경계](#3-네트워크-경계) 표 |
-| 디스크에 남는 것 | `.edge-profile/`(로그인 쿠키 포함, 실행 폴더), `_local/memory/sites.json`(사이트 이름·URL·클릭 경로, 입력값 제외), 임시 폴더의 채팅 창용 브라우저 프로필(`agent-ui-*`, pywebview가 없을 때)과 앱 아이콘 파일 |
-| 로그 파일 | 만들지 않음. 진행 내역은 콘솔과 채팅 창에만 출력. 스크린샷도 파일로 저장하지 않음 |
-| OS 기능 사용 | Windows: user32(ctypes)로 백그라운드 창 위치·작업 표시줄 표시 변경, 창 깜빡임. macOS: osascript로 앱 숨김 |
-| 관리자 권한 | 불필요. 서비스·레지스트리 등록 없음 |
-| 임의 코드 실행 | `run_code`로 모델이 쓴 Python이 사용자 권한으로 실행됨(샌드박스 아님, [보안과 한계](#보안과-한계) 참고) |
+| Processes | Python, the playwright driver (`node.exe`), and Edge/Chrome (up to one for the agent and one for background work; if pywebview is absent, one more for the chat window) |
+| Listening ports | Only when pywebview is absent: one arbitrary port on `127.0.0.1` (token auth). If you use CDP attach, the debug port you opened (default 9222, no auth) |
+| Outbound connections | The [Network boundaries](#3-network-boundaries) table above |
+| Left on disk | `.edge-profile/` (includes login cookies; in the folder you ran from), `_local/memory/sites.json` (site names, URLs, and click paths; typed input excluded), plus, in the temp folder, the chat-window browser profile (`agent-ui-*`, when pywebview is absent) and the app icon file |
+| Log files | None are created. Progress is printed only to the console and the chat window. Screenshots are not saved to files either |
+| OS features used | Windows: user32 (ctypes) to change background-window position and taskbar visibility, and to flash the window. macOS: osascript to hide the app |
+| Administrator rights | Not required. No service or registry registration |
+| Arbitrary code execution | Python written by the model runs through `run_code` with your user privileges (not sandboxed; see [Security and limitations](#security-and-limitations)) |
 
-**업데이트와 삭제**
+**Updates and removal**
 
-- 자동 업데이트는 없습니다. 새 버전은 소스와 휠을 다시 반입해 덮어쓰고, 위 `pip install --no-index` 명령을 다시 실행합니다.
-- 사이트 메모리(`_local/`)는 소스 폴더 안에, 전용 프로필(`.edge-profile/`)은 실행 폴더에 있습니다. 폴더를 통째로 교체하면 함께 사라지므로, 보존하려면 옮겨 두거나 `AGENT_MEMORY`, `AGENT_PROFILE`로 바깥 경로를 지정하세요.
-- 삭제는 소스 폴더(`.venv`, `.edge-profile`, `_local` 포함)와 임시 폴더의 `agent-ui-*`, `browser-agent-icon-*` 파일을 지우면 됩니다.
+- There is no automatic update. For a new version, transfer the source and wheels in again, overwrite, and rerun the `pip install --no-index` command above.
+- Site memory (`_local/`) is inside the source folder, and the dedicated profile (`.edge-profile/`) is in the folder you ran from. Replacing the folder wholesale removes them too. To keep them, move them aside, or point `AGENT_MEMORY` and `AGENT_PROFILE` at paths outside the folder.
+- To remove it, delete the source folder (including `.venv`, `.edge-profile`, and `_local`) and the `agent-ui-*` and `browser-agent-icon-*` files in the temp folder.
 
 ---
+## Features
 
-## 주요 기능
-
-- **텍스트만으로 조작**: 매 턴 `dom.js`가 페이지의 인터랙티브 요소를 `[i] <tag> "라벨"` 목록으로 정리하고, 모델은 인덱스로 클릭·입력합니다. 이미지 입력이 없는 모델도 동작합니다.
-- **17개 도구**: `navigate`, `new_tab`, `switch_tab`, `back`, `click`, `type`, `press`, `hover`, `scroll`, `attach`, `extract`, `find`, `wait`, `screenshot`, `run_code`, `ask_user`, `done`. 폼 입력처럼 페이지가 바뀌지 않는 연속 동작은 한 턴에 여러 도구를 묶어 호출합니다.
-- **두 가지 브라우저 모드**: 디버그 포트(기본 `9222`)가 응답하면 그 브라우저에 attach하고, 없으면 전용 프로필로 Edge/Chrome을 띄웁니다.
-- **백그라운드 작업**: 현재 탭에 없는 내용은 사용자 쿠키를 복사한 화면 밖 창에서 찾습니다. "열어줘", "보여줘"라고 하면 사용자 화면에 띄웁니다.
-- **사이트 메모리**: 사용자가 부르는 사이트 이름과, 그 사이트에서 성공한 조회·조작 경로를 실행이 끝난 뒤에도 저장해 다음 요청에 재사용합니다.
-- **위험 동작 확인**: 삭제·발송·등록·결제·제출 같은 키워드가 걸린 클릭과 스크립트는 실행 전에 묻습니다(키워드 휴리스틱, [보안과 한계](#보안과-한계) 참고).
-- **채팅 창과 CLI**: 기본은 채팅 창(질문·확인·입력 폼·중단 버튼·스크린샷 썸네일), `--cli`는 터미널 대화 루프입니다.
-- **비전 모델 분리(선택)**: `AGENT_VISION_MODEL`을 지정하면 스크린샷을 별도 모델이 텍스트로 판독해 메인 모델에 전달합니다.
-- **실제 키 입력**: `type`은 keydown/keyup을 발생시켜 자동완성이 열리고, `<select>`, `contenteditable` 에디터, iframe 안 입력칸도 다룹니다. `attach`는 `input[type=file]`에 파일을 직접 설정합니다.
-- **로그의 비밀값 가림**: 비밀번호 칸 입력, 비공개로 입력한 값, `run_code` 출력 속 비밀번호·OTP 값은 화면 로그와 결과에서 `****`로 가립니다. 단, 비공개로 입력한 값도 모델이 입력해야 하므로 LLM 서버로는 전송됩니다.
+- **Text-only control**: On every turn, `dom.js` lists the page's interactive elements as `[i] <tag> "label"`, and the model clicks or types by index. Models without image input also work.
+- **17 tools**: `navigate`, `new_tab`, `switch_tab`, `back`, `click`, `type`, `press`, `hover`, `scroll`, `attach`, `extract`, `find`, `wait`, `screenshot`, `run_code`, `ask_user`, `done`. Multiple actions that do not change the page, such as filling out a form, are grouped into one turn.
+- **Two browser modes**: If the debug port (default `9222`) responds, the agent attaches to that browser. Otherwise, it launches Edge/Chrome with a dedicated profile.
+- **Background tasks**: Content not in the current tab is found in an off-screen window that copies the user's cookies. If you say "open it" or "show it," the agent displays it on your screen.
+- **Site memory**: After a run ends, it saves the site name used by the user and the successful lookup and interaction paths for that site, and reuses them for later requests.
+- **Confirmation for risky actions**: Before running clicks and scripts that match keywords such as delete, send, post, pay, or submit, the agent asks for confirmation (keyword heuristic; see [Security and limitations](#security-and-limitations)).
+- **Chat window and CLI**: The default is the chat window (questions, confirmations, input forms, stop button, screenshot thumbnails); `--cli` starts a terminal conversation loop.
+- **Optional separate vision model**: If you set `AGENT_VISION_MODEL`, a separate model reads screenshots as text and passes the result to the main model.
+- **Real keystrokes**: `type` fires keydown/keyup events, opens autocomplete, and handles `<select>`, `contenteditable` editors, and input fields inside iframes. `attach` sets a file directly on `input[type=file]`.
+- **Redacted secrets in logs**: Password field input, values entered privately, and password/OTP values in `run_code` output are masked as `****` in screen logs and results. However, privately entered values are still sent to the LLM server because the model needs to enter them.
 
 <details>
-<summary><b>관찰 목록 표시</b></summary>
+<summary><b>Observation list format</b></summary>
 
-요소 목록은 `[i] <tag> "라벨" +표시 {옵션} @f프레임` 형식입니다. 중첩·cross-origin iframe을 포함한 모든 프레임에서 요소를 모으고, 화면에 가까운 것부터 최대 300개를 보여 줍니다. 화면에서만 알 수 있는 정보를 글자로 바꿔 주기 때문에, 이미지 입력이 없는 모델도 같은 정보를 받습니다.
+The element list uses the format `[i] <tag> "label" +marker {options} @f<frame>`. Elements are collected from all frames, including nested and cross-origin iframes, and up to 300 are shown, starting with those closest to the viewport. This converts information that would otherwise only be visible on screen into text, so models without image input receive the same information.
 
-| 표시 | 뜻 | 모델의 대응 |
+| Marker | Meaning | Model response |
 | :--- | :--- | :--- |
-| `+접힘` | `aria-expanded="false"` 또는 닫힌 `<details>` | click으로 펼친 뒤 다시 관찰 |
-| `+팝업` | `aria-haspopup` | hover 또는 click |
-| `+숨은메뉴` | 자신이나 부모 아래에 숨겨진 하위 메뉴가 있음 (`display:none`, `visibility:hidden`, `opacity:0`) | hover로 펼친 뒤 다시 관찰 |
-| `+후보` | 입력 중 뜬 자동완성/선택 목록의 항목 | 원하는 항목을 click |
-| `{*전체\|서울\|+9}` | `<select>`의 선택지, `*`가 현재 값 | 그 중 하나를 `type`의 text로 |
+| `+접힘` (collapsed) | `aria-expanded="false"` or a closed `<details>` | Expand with `click`, then observe again |
+| `+팝업` (popup) | `aria-haspopup` | `hover` or `click` |
+| `+숨은메뉴` (hidden menu) | A submenu is hidden beneath the element or one of its parents (`display:none`, `visibility:hidden`, `opacity:0`) | Expand with `hover`, then observe again |
+| `+후보` (suggestion) | An item in an autocomplete/selection list shown while typing | `click` the desired item |
+| `{*전체\|서울\|+9}` | Options in a `<select>`; `*` marks the current value | Use one of them as the text for `type` |
 
-<!-- TODO: dom.js 마커 수집 규칙 세부는 docs/observation.md로 분리 예정 -->
+<!-- TODO: Move the detailed dom.js marker collection rules to docs/observation.md -->
 
 </details>
 
 ---
 
-## 사용법
+## Usage
 
-아래 예시는 가상환경을 활성화했다고 가정합니다(macOS/Linux `source .venv/bin/activate`, Windows `.venv\Scripts\Activate.ps1`).
+The examples below assume that the virtual environment is activated (`source .venv/bin/activate` on macOS/Linux, `.venv\Scripts\Activate.ps1` on Windows).
 
 ```sh
-python main.py                                    # 기본: 채팅 창. 창을 닫으면 종료
-python main.py "공지 게시판에서 이번 주 새 글 알려줘"   # 첫 메시지를 인자로: 창이 뜨자마자 실행
-python main.py --cli                              # 터미널 대화 루프 (you> 프롬프트)
-python main.py --ui                               # 표준 입력이 파이프여도 항상 채팅 창
-python main.py --debug                            # 도구 인자·결과·내부 판단까지 출력 (AGENT_LOG=debug)
-python main.py --quiet                            # 결과만 출력 (AGENT_LOG=quiet)
-python main.py --selftest                         # 자체 테스트 (LLM·브라우저 불필요)
+python main.py                                    # default: chat window. Closing the window quits
+python main.py "Tell me the new posts on the notice board this week"   # first message as an argument: runs as soon as the window opens
+python main.py --cli                              # terminal conversation loop (you> prompt)
+python main.py --ui                               # always use the chat window, even if stdin is piped
+python main.py --debug                            # print tool arguments/results and internal decisions too (AGENT_LOG=debug)
+python main.py --quiet                            # print results only (AGENT_LOG=quiet)
+python main.py --selftest                         # self-test (no LLM or browser required)
 ```
 
-옵션 없이 실행했는데 표준 입력이 파이프이면 자동으로 CLI 모드가 됩니다.
+If you run without options while stdin is piped, the agent automatically switches to CLI mode.
 
-기본(`brief`) 출력은 동작마다 한 줄씩 보여줍니다.
+The default (`brief`) output shows one line for each action.
 
 ```
 · 이동 portal.example.internal/notice
 · 페이지 읽기
-[result] 공지 게시판 이번 주 새 글 3개: ...
+[result] 3 new posts on the notice board this week: ...
 ```
 
 <details>
-<summary><b>대화 흐름과 종료</b></summary>
+<summary><b>Conversation flow and exit</b></summary>
 
-- 한 줄 입력할 때마다 에이전트가 처리하고 결과를 출력합니다. 대화 맥락은 세션이 끝날 때까지 유지됩니다.
-- `종료`, `끝`, `exit`, `quit`, `q` 입력이나 Ctrl+C / EOF로 종료합니다. 작업 실행 중 Ctrl+C는 그 작업만 중단하고 대화는 이어집니다.
-- CLI에서 `/bg 작업`이라고 쓰면 현재 탭을 쓰지 않고 처음부터 백그라운드에서 작업합니다.
-
-</details>
-
-<details>
-<summary><b>채팅 창 상세</b></summary>
-
-- 입력창 위에 현재 탭의 제목·URL·파비콘이 칩으로 표시됩니다. 칩을 그대로 두면 그 탭에서 작업하고, 탭에 없는 내용은 백그라운드 브라우저에서 확인한 뒤 결과에 함께 알립니다.
-- 칩을 x로 닫으면 그 요청 하나만 처음부터 백그라운드에서 작업합니다.
-- 대화의 첫 요청에서 쓴 탭은 그 대화에 고정됩니다. 다른 탭에서 작업하려면 새 채팅을 엽니다. 고정한 탭을 닫으면 그때 보고 있는 탭으로 넘어갑니다.
-- 질문·확인이 뜨면 최소화된 창이 복원되고, Windows에서는 작업 표시줄도 깜빡입니다.
-- pywebview 창에서는 작업 중에 창을 닫으면 종료할지 한 번 더 묻습니다.
-- 에이전트가 찍은 스크린샷은 채팅에 썸네일로 뜨고, 클릭하면 원본 크기로 볼 수 있습니다.
-- 상단 설정 버튼은 현재 설정(엔드포인트·모델·비전 모델·브라우저 모드·로그 레벨·메모리 경로)과 각 값의 출처를 읽기 전용으로 보여줍니다. API 키는 끝 4자리만 표시합니다.
-- 창을 닫으면 CDP로 attach한 브라우저는 그대로 두고 연결만 끊습니다. 직접 띄운 프로필 브라우저는 함께 닫힙니다.
-- pywebview 창은 Python과 js_api 브리지로 직접 통신하므로 HTTP 포트를 열지 않습니다. pywebview가 없으면 `127.0.0.1`의 로컬 서버와 Edge/Chrome `--app` 창을 씁니다. 이때는 창 URL의 무작위 토큰으로 다른 localhost 페이지에서 온 위조 요청을 막습니다.
+- The agent processes each line of input and prints a result. Conversation context is kept until the session ends.
+- Enter `종료` (exit), `끝` (end), `exit`, `quit`, or `q`, or use Ctrl+C / EOF to exit. Ctrl+C during a task stops only that task and keeps the conversation going.
+- In CLI mode, enter `/bg <task>` to run a task in the background from the start without using the current tab.
 
 </details>
 
 <details>
-<summary><b>로그 레벨</b></summary>
+<summary><b>Chat window details</b></summary>
 
-| 레벨 | 보이는 것 |
+- A chip above the input field shows the current tab's title, URL, and favicon. Leave the chip as is to work in that tab. If the content is not in the tab, the agent checks in a background browser and reports it with the result.
+- Close the chip with x to run that request in the background from the start.
+- The tab used for the first request in a conversation is pinned to that conversation. To work in another tab, open a new chat. If the pinned tab is closed, the agent switches to the tab currently in view.
+- When a question or confirmation appears, a minimized window is restored, and on Windows the taskbar also flashes.
+- In a pywebview window, if you close the window while a task is running, the agent asks once more whether to exit.
+- Screenshots taken by the agent appear as thumbnails in the chat; click one to view it at full size.
+- The settings button at the top shows the current settings (endpoint, model, vision model, browser mode, log level, memory path) and the source of each value, in read-only form. Only the last 4 characters of the API key are shown.
+- Closing the window leaves a browser attached through CDP running and only disconnects from it. A browser launched with a dedicated profile is closed along with the window.
+- The pywebview window communicates directly with Python through the js_api bridge, so it does not open an HTTP port. If pywebview is unavailable, it uses a local server on `127.0.0.1` and an Edge/Chrome `--app` window. In this case, a random token in the window URL prevents forged requests from other localhost pages.
+
+</details>
+
+<details>
+<summary><b>Log levels</b></summary>
+
+| Level | What you see |
 | :--- | :--- |
-| `quiet` | 최종 결과만 |
-| `brief` (기본) | 이동·클릭(라벨)·펼치기·입력·키·뒤로·탭·첨부·페이지 읽기·화면 확인·스크립트 실행, 실패 이유, 사이트 메모리 참고/저장 |
-| `debug` | 위 내용과 도구 인자·결과, scroll·wait·find, 반복 차단, 스크린샷 게이트, 비전 판독 등 내부 판단 |
+| `quiet` | Final result only |
+| `brief` (default) | Navigation, clicks (label), expanding, typing, keys, back, tabs, attachments, page reads, screen checks, script execution, failure reasons, and site memory lookup/save |
+| `debug` | All of the above plus tool arguments/results, scroll, wait, find, loop blocking, screenshot gate, vision interpretation, and other internal decisions |
 
 </details>
 
 <details>
-<summary><b>이미 띄운 브라우저에 붙이기 (CDP attach)</b></summary>
+<summary><b>Attach to an already running browser (CDP attach)</b></summary>
 
-디버그 포트로 띄운 브라우저가 있으면 에이전트가 거기에 붙습니다.
+If a browser is running with a debug port, the agent attaches to it.
 
 ```powershell
-# Windows 예시 (설치 경로는 PC마다 다를 수 있음)
+# Windows example (the installation path may differ by PC)
 & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" `
   --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\.nongside-edge"
 ```
 
-- Chrome 136 이상은 기본 프로필에서 디버그 포트를 열지 않으므로 `--user-data-dir`로 별도 프로필 폴더를 지정해야 합니다(Chromium 기반인 Edge에서도 같은 증상이 보고돼 있습니다). 즉 평소 쓰는 기본 프로필의 로그인은 그대로 넘어오지 않고, 이 프로필에서 한 번 로그인해야 합니다.
-- 포트가 응답하지 않으면 에이전트는 별도 안내 없이 전용 프로필로 새 브라우저를 띄웁니다. 채팅 창 설정 버튼의 브라우저 모드가 `CDP attach`인지 확인하세요.
-- 채팅 창에서는 지금 보고 있는 탭에서 시작합니다. CLI에서는 탭이 여러 개면 어느 탭을 쓸지 터미널에서 묻습니다.
-- 포트가 응답하면 무엇이든 그곳에 붙습니다. 다른 프로세스가 같은 포트를 쓰고 있으면 창이 보이지 않으니 `AGENT_CDP_PORT`를 빈 포트로 바꾸세요.
-- 디버그 포트에는 인증이 없어 같은 PC의 다른 프로그램도 그 브라우저를 조작할 수 있습니다. 쓰지 않을 때는 디버그 포트 없이 브라우저를 다시 띄우세요.
+- Chrome 136 and later does not open a debug port on the default profile, so you must specify a separate profile folder with `--user-data-dir` (the same issue has been reported in Chromium-based Edge). In other words, the login from your usual default profile does not carry over; you must log in once in this profile.
+- If the port does not respond, the agent launches a new browser with a dedicated profile without a separate notice. Check whether the browser mode in the chat window settings is `CDP attach`.
+- In the chat window, the agent starts in the tab currently in view. If there are multiple tabs in CLI mode, the terminal asks which tab to use.
+- If the port responds, the agent attaches to whatever is listening there. If another process is using the same port, the window will not appear, so change `AGENT_CDP_PORT` to an unused port.
+- The debug port has no authentication, so other programs on the same PC can also control that browser. When you are not using it, relaunch the browser without a debug port.
 
 </details>
 
 ---
 
-## 설정
+## Configuration
 
-모든 설정은 환경변수로 지정하며, 같은 이름을 레포 루트 `.env`에 적어도 됩니다.
+Set all settings with environment variables. You can also put the same names in the repository root `.env` file.
 
-우선순위: **process 환경변수 > `.env` > `~/.claude/settings.json`의 `env` 블록 > 기본값**
+Priority: **process environment variables > `.env` > the `env` block in `~/.claude/settings.json` > defaults**
 
-`~/.claude/settings.json`이 있으면 읽는 이유는 Claude Code에 커스텀 엔드포인트를 이미 설정한 경우 별도 설정 없이 바로 쓰기 위해서입니다. 이 경우 모델 이름은 `ANTHROPIC_MODEL`, 비전 모델은 `ANTHROPIC_VISION_MODEL` 키에서 읽습니다. `.env`나 환경변수에 값이 없으면 이 파일의 키와 엔드포인트가 그대로 쓰이니, 의도한 서버인지 설정 화면에서 확인하세요.
+`~/.claude/settings.json` is read so that if you have already configured a custom endpoint for Claude Code, you can use it immediately without separate configuration. In this case, the model name is read from the `ANTHROPIC_MODEL` key and the vision model from `ANTHROPIC_VISION_MODEL`. If a value is not set in `.env` or environment variables, this file's keys and endpoint are used as-is, so check in the settings screen that it is the intended server.
 
-| 이름 | 기본값 | 설명 |
+| Name | Default | Description |
 | :--- | :--- | :--- |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | LLM 서버 주소(망 안 서버, 프록시/게이트웨이). 뒤에 `/v1/messages`가 붙음. 폐쇄망에서는 필수 |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | (필수) | API 키 또는 Bearer 토큰. `x-api-key`와 `Authorization: Bearer` 헤더로 함께 전송 |
-| `AGENT_MODEL` | `claude-sonnet-4-5` | 메인 모델 이름. 내부 서버에서는 서버에 올린 이름으로 지정 |
-| `AGENT_MAX_TOKENS` | `16384` | 응답 최대 토큰 (비전 판독 호출은 미설정 시 `8192`) |
-| `AGENT_VISION_MODEL` | (없음) | 설정하면 스크린샷을 이 모델이 텍스트로 판독. 미설정이면 메인 모델에 이미지 직접 전달, 판독 실패 시 이미지로 폴백 |
-| `AGENT_CHANNEL` | `msedge` | 에이전트 브라우저의 playwright 채널. Edge가 없으면 `chrome`으로 바꿔야 함(자동 폴백 없음) |
-| `AGENT_PROFILE` | `<cwd>/.edge-profile` | 직접 띄울 때 쓰는 전용 프로필 디렉터리. 실행 폴더 기준이며, 채널과 관계없이 같은 기본 이름 |
-| `AGENT_CDP_PORT` | `9222` | attach를 시도할 디버그 포트 |
-| `AGENT_BACKGROUND` | `1` | 현재 탭에 없는 내용을 화면 밖 백그라운드 창에서 작업. `0`/`false`/`no`/`off`면 사용자 탭에서 바로 이동 |
-| `AGENT_UI_BROWSER` | (비움) | 채팅 창 종류. 비우면 pywebview(없으면 `--app` 창), `webview`는 pywebview만, `msedge`(`edge`)/`chrome`(`google-chrome`)은 해당 브라우저 `--app` 창. 그 외 값은 시작 시 오류 |
-| `AGENT_LOG` | `brief` | `quiet` / `brief` / `debug`. 그 외 값은 시작 시 오류 |
-| `AGENT_MEMORY` | `_local/memory/sites.json` | 사이트 메모리 파일 경로. 기본 위치는 소스 폴더 기준이며, 폴더는 첫 저장 때 자동으로 만들어짐(git 미추적) |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | LLM server address (in-network server, proxy/gateway). `/v1/messages` is appended. Required for air-gapped networks |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | (required) | API key or Bearer token. Sent together in the `x-api-key` and `Authorization: Bearer` headers |
+| `AGENT_MODEL` | `claude-sonnet-4-5` | Main model name. For an internal server, set this to the name deployed on the server |
+| `AGENT_MAX_TOKENS` | `16384` | Maximum response tokens (if unset, `8192` for vision interpretation calls) |
+| `AGENT_VISION_MODEL` | (none) | If set, this model reads screenshots as text. If unset, images are sent directly to the main model; falls back to images if interpretation fails |
+| `AGENT_CHANNEL` | `msedge` | Playwright channel for the agent browser. If Edge is unavailable, you must change this to `chrome` (no automatic fallback) |
+| `AGENT_PROFILE` | `<cwd>/.edge-profile` | Dedicated profile directory used when launching a browser. Relative to the run directory, with the same default name regardless of channel |
+| `AGENT_CDP_PORT` | `9222` | Debug port to try to attach to |
+| `AGENT_BACKGROUND` | `1` | Work on content not in the current tab in an off-screen background window. `0`/`false`/`no`/`off` makes the agent navigate directly in the user's tab |
+| `AGENT_UI_BROWSER` | (empty) | Chat window type. If empty, use pywebview (or an `--app` window if unavailable); `webview` uses pywebview only; `msedge` (`edge`)/`chrome` (`google-chrome`) uses that browser's `--app` window. Any other value causes a startup error |
+| `AGENT_LOG` | `brief` | `quiet` / `brief` / `debug`. Any other value causes a startup error |
+| `AGENT_MEMORY` | `_local/memory/sites.json` | Site memory file path. The default location is relative to the source folder, and the directory is created automatically on first save (not tracked by git) |
 
 <details>
-<summary><b>.env 파일 형식</b></summary>
+<summary><b>.env file format</b></summary>
 
-- `KEY=VALUE` 한 줄에 하나. 값 양끝의 따옴표는 벗겨집니다.
-- `#` 주석, 빈 줄, `=`가 없는 줄은 무시합니다.
-- UTF-16(BOM) 파일도 읽습니다. PowerShell 5.1의 `>` 리다이렉션으로 만든 파일도 동작합니다.
-- 이미 process 환경변수에 있는 키는 덮어쓰지 않습니다.
+- One `KEY=VALUE` per line. Quotes around the value are stripped.
+- `#` comments, blank lines, and lines without `=` are ignored.
+- UTF-16 (BOM) files are also read. Files created with PowerShell 5.1 `>` redirection also work.
+- Keys already present in process environment variables are not overwritten.
 
 </details>
 
 <details>
-<summary><b>백그라운드 브라우저 동작</b></summary>
+<summary><b>Background browser behavior</b></summary>
 
-- 일부 환경에서는 헤드리스 실행이 제한되어 있어, 헤드리스 대신 일반 창을 화면 밖 좌표에 띄웁니다. Windows에서는 작업 표시줄에 표시하지 않고 포커스를 원래 창으로 되돌리며, macOS에서는 앱 숨김으로 가립니다. Linux에서는 화면 밖으로 옮기기만 하고 별도 숨김 처리는 없습니다.
-- 창은 처음 필요할 때 열어 계속 재사용합니다. 백그라운드 창은 별도 컨텍스트입니다. 사용자 브라우저에서 쿠키만 복사하며, localStorage 등 다른 저장소는 공유하지 않습니다.
-- 그 창에서 열리는 `window.open` 팝업은 화면에 뜨지 않도록 같은 창의 탭으로 엽니다.
-- 백그라운드에서 작업한 사실은 진행 내역에 표시됩니다.
-- 브라우저 종류는 attach한 브라우저와 같은 종류, `AGENT_CHANNEL`, 나머지 순으로 고릅니다.
-
-</details>
-
-<details>
-<summary><b>LLM 호출과 재시도</b></summary>
-
-- 공식 SDK 없이 `http.client`로 `{ANTHROPIC_BASE_URL}/v1/messages`에 POST하고, keep-alive 연결을 재사용합니다. 헤더는 `anthropic-version: 2023-06-01`입니다.
-- 최대 3회 시도합니다. HTTP `429/500/502/503/529`와 연결·DNS 일시 실패는 지수 백오프(1, 2, 4초)로 재시도하며, 서버가 `retry-after`를 주면 따르되 10초로 제한합니다.
-- 응답 대기 타임아웃은 120초이며, 타임아웃은 재시도하지 않고 바로 오류로 올립니다.
+- Some environments restrict headless execution, so instead of running headless, the agent opens a regular window at off-screen coordinates. On Windows, it is not shown on the taskbar and focus is returned to the original window; on macOS, the app is hidden. On Linux, the window is only moved off-screen, with no additional hiding.
+- The window opens the first time it is needed and is reused. The background window has a separate context. It copies only cookies from the user's browser; other storage, such as localStorage, is not shared.
+- `window.open` popups opened from that window are opened as tabs in the same window so they do not appear on screen.
+- The progress log shows when a task was performed in the background.
+- The browser type is selected in this order: the same type as the attached browser, `AGENT_CHANNEL`, then the remaining option.
 
 </details>
 
 <details>
-<summary><b>사이트 플레이북 (선택)</b></summary>
+<summary><b>LLM calls and retries</b></summary>
 
-소스 폴더에 `_local/sites.md` 파일을 직접 만들어 두면, 그 내용을 `[사이트 플레이북]`으로 시스템 프롬프트 뒤에 붙입니다. 내부 사이트의 주소, 메뉴 구조, 주의 사항을 사람이 적어 둘 때 씁니다. 에이전트가 자동으로 쓰는 사이트 메모리(`_local/memory/sites.json`)와는 다른 파일입니다. 매 호출마다 다시 읽으므로 실행 중에 고쳐도 다음 턴부터 반영됩니다.
+- Without the official SDK, the agent POSTs to `{ANTHROPIC_BASE_URL}/v1/messages` using `http.client` and reuses keep-alive connections. The header is `anthropic-version: 2023-06-01`.
+- The agent makes up to 3 attempts. It retries HTTP `429/500/502/503/529` and temporary connection/DNS failures with exponential backoff (1, 2, 4 seconds). If the server provides `retry-after`, the agent follows it, capped at 10 seconds.
+- The response timeout is 120 seconds. Timeouts are not retried and are raised as errors immediately.
+
+</details>
+
+<details>
+<summary><b>Site playbook (optional)</b></summary>
+
+If you create an `_local/sites.md` file in the source folder, its contents are appended to the system prompt under the `[사이트 플레이북]` (site playbook) header. Use it to document internal site URLs, menu structures, and cautions. This is separate from the site memory that the agent writes automatically (`_local/memory/sites.json`). The file is reread on every call, so edits made during a run take effect on the next turn.
 
 </details>
 
 ---
 
-## 사이트 메모리
+## Site memory
 
-에이전트는 사용자가 부르는 사이트 이름(예: "공지 게시판")과 그 사이트에서 실제로 성공한 조회·조작 경로를 실행이 끝난 뒤에도 저장합니다. 다음에 같은 사이트를 요청하면 메뉴를 처음부터 찾지 않고 저장된 경로를 재사용합니다. 인터넷 검색이 안 되는 망에서는 사이트를 다시 찾는 수고를 줄여 줍니다.
+The agent saves the site name used by the user (for example, "notice board") and the lookup and interaction paths that actually succeeded on that site, even after a run ends. When you request the same site again, the agent reuses the saved path instead of finding the menu from scratch. This reduces the effort of finding sites again in networks where internet search is unavailable.
 
-- **저장 위치**: 기본 `_local/memory/sites.json` (`AGENT_MEMORY`로 변경). 파일 형식 버전 3이며, 이전 형식(v1, v2) 파일은 읽을 때 자동으로 변환하고 원본을 `sites.v1.bak` / `sites.v2.bak`로 남깁니다.
-- **기록은 에이전트가 수행**: 모델은 작업을 끝낼 때(`done`) 작업 이름(`op`)과, 처음 간 사이트면 이름·대표 URL(`remember`) 정도만 줍니다. 실제 경로(진입 URL, 입력·선택·클릭 단계, 성공 확인 조건)는 에이전트가 이번 요청에서 성공한 동작만 골라 줄여서 저장합니다. 입력값 자체는 저장하지 않고 칸 이름 자리로 남깁니다.
-- **요청에 필요한 만큼만 주입**: 요청과 관련된 사이트만 한 줄 요약으로 모델에 보여 주고, 모델이 `navigate {"page": "사이트/작업"}`으로 고를 때 그 작업의 단계만 덧붙입니다.
-- **오염 방지**: 셀렉터·코드·가격·날짜처럼 금방 낡는 정보는 저장하지 않습니다. 실패·취소·중단으로 끝난 요청이나 입력값이 URL에 남는 경로도 기록하지 않습니다. 저장된 작업이 연속 2번 실패하면 목록에서 숨기고 다시 배웁니다.
-- **재생해도 확인은 그대로**: 저장된 경로를 다시 실행할 때도 위험 키워드가 걸린 동작은 실제 라벨로 다시 확인합니다.
+- **Storage location**: `_local/memory/sites.json` by default (change with `AGENT_MEMORY`). The file format is version 3. Older format (v1, v2) files are converted automatically when read, and the originals are kept as `sites.v1.bak` / `sites.v2.bak`.
+- **The agent records the paths**: When the task ends (`done`), the model provides only the task name (`op`) and, if it is the first visit to a site, its name and representative URL (`remember`). The agent selects and condenses only actions that succeeded in the current request to save the actual path (entry URL, input/selection/click steps, success criteria). It does not save input values, leaving placeholders for field names instead.
+- **Inject only what the request needs**: The model sees a one-line summary of only the sites related to the request. When the model selects one with `navigate {"page": "site/task"}`, only the steps for that task are added.
+- **Preventing contamination**: Information that quickly becomes stale, such as selectors, code, prices, and dates, is not saved. Requests that end in failure, cancellation, or interruption, and paths that leave input values in URLs, are not recorded. If a saved task fails 2 consecutive times, it is hidden from the list and learned again.
+- **Confirmation still applies on replay**: When replaying a saved path, actions matching risky keywords are still confirmed using the actual label.
 
 <details>
-<summary><b>저장 구조와 상한</b></summary>
+<summary><b>Storage structure and limits</b></summary>
 
-| 필드 | 내용 |
+| Field | Content |
 | :--- | :--- |
-| 이름 · `aliases` | 사용자가 부르는 호칭과 별칭. `메일`, `카페` 같은 일반 명사나 페이지 제목은 이름으로 쓰지 않음 |
-| `url` · `match` | 대표 URL(사이트 홈)과 이 사이트 페이지를 알아보는 URL 조각 |
-| `notes` | 사이트 제약 메모 한 줄 (예: `로그인 → 글쓰기는 로그인 필요`) |
-| `tasks` | 작업 이름 → 에이전트가 기록한 성공 경로 (`kind: act` 조작 / `kind: read` 읽기, 성공·실패 횟수) |
-| `hits` · `used` | 성공 기록 횟수와 마지막 사용일. 퇴출 점수 계산에 사용 |
+| Name · `aliases` | User-facing name and aliases. Generic nouns such as `메일` (mail) or `카페` (cafe), and page titles, are not used as names |
+| `url` · `match` | Representative URL (site home) and URL fragments used to recognize pages on this site |
+| `notes` | One-line note about site constraints (for example, `로그인 → 글쓰기는 로그인 필요` (login required to write a post)) |
+| `tasks` | Task name → successful path recorded by the agent (`kind: act` for interaction / `kind: read` for reading, with success/failure counts) |
+| `hits` · `used` | Number of successful records and date last used. Used to calculate eviction scores |
 
-| 상한 | 값 |
+| Limit | Value |
 | :--- | :--- |
-| 사이트 수 | 50 (넘으면 `(성공 횟수 + 1) × 0.5^(경과일 / 30)` 점수가 가장 낮은 사이트부터 퇴출) |
-| 사이트당 작업 | 20 |
-| 사이트당 메모 | 5 |
-| 별칭 / match 항목 | 각 8 |
-| 연속 실패 숨김 기준 | 2 |
+| Number of sites | 50 (when exceeded, evict the site with the lowest score first: `(success count + 1) × 0.5^(elapsed days / 30)`) |
+| Tasks per site | 20 |
+| Notes per site | 5 |
+| Aliases / match entries | 8 each |
+| Consecutive failures before hiding | 2 |
 
-조작 작업 예시 (위험 클릭은 `⚠`로 표시해 저장):
+Example of an interaction task (risky clicks are stored with `⚠`):
 
 ```
 글쓰기 = {kind: act, url: https://portal.example.internal/board/compose, path: [..., 새 글 작성],
@@ -460,103 +463,103 @@ python main.py --selftest                         # 자체 테스트 (LLM·브�
          check: list?saved=1, ok: 3, fail: 0}
 ```
 
-읽기 작업은 `how`(extract, run_code, 관찰과 대기·스크롤)와 진입 뒤 누를 `steps`를 두며, 검색어 자리는 `{q}`입니다.
+Read tasks have `how` (extract, run_code, observation, and wait/scroll) and `steps` to click after entry; search terms use the `{q}` placeholder.
 
-<!-- TODO: 기록·이름 결정·주입 규칙의 세부(진입 URL 판정, 별칭 규칙, 목록 글자 예산 등)는 docs/site-memory.md로 분리 예정 -->
+<!-- TODO: Move details of recording, name selection, and injection rules (entry URL determination, alias rules, list character budget, etc.) to docs/site-memory.md -->
 
 </details>
 
 ---
 
-## 동작 방식
+## How it works
 
 ```mermaid
 flowchart LR
-    A[사용자 요청] --> B["관찰\ndom.js 요소 목록 + URL·제목\n+ 탭 목록 + 사이트 메모리"]
-    B --> C["망 안 LLM 서버\nMessages API tool use"]
-    C -->|도구 호출| D{위험 키워드?}
-    D -->|예| E[사용자 확인]
-    D -->|아니오| F["브라우저 조작\nplaywright / CDP"]
-    E -->|승인| F
-    F -->|결과 + 새 관찰| C
-    C -->|done| G["결과 요약\n+ 성공 경로를 사이트 메모리에 기록"]
+    A[User request] --> B["Observe\ndom.js element list + URL/title\n+ tab list + site memory"]
+    B --> C["In-network LLM server\nMessages API tool use"]
+    C -->|Tool call| D{Risky keyword?}
+    D -->|Yes| E[User confirmation]
+    D -->|No| F["Browser control\nplaywright / CDP"]
+    E -->|Approve| F
+    F -->|Result + new observation| C
+    C -->|done| G["Result summary\n+ record successful path in site memory"]
 ```
 
-| 파일 | 역할 |
+| File | Role |
 | :--- | :--- |
-| `main.py` | 진입점. 채팅 창 / CLI / `--selftest` 분기, 대화 루프 |
-| `agent.py` | 도구 스키마(`TOOLS`)와 에이전트 루프, 위험 동작 확인 |
-| `llm.py` | 시스템 프롬프트, 설정 로딩(.env, settings.json), Messages API 호출과 재시도, 비전 판독 |
-| `browser.py` | playwright/CDP 브라우저 제어, 백그라운드 창, `extract`, `run_code` 실행 |
-| `dom.js` | `page.evaluate`로 실행되는 요소 목록·마커 수집 스크립트 |
-| `memory.py` | 사이트 메모리 저장·변환·주입 |
-| `webui.py` | 채팅 창(HTML 단일 파일), pywebview 브리지, 대체용 토큰 인증 로컬 서버 |
+| `main.py` | Entry point. Routes to chat window / CLI / `--selftest`; conversation loop |
+| `agent.py` | Tool schema (`TOOLS`), agent loop, and confirmation for risky actions |
+| `llm.py` | System prompt, configuration loading (.env, settings.json), Messages API calls and retries, vision interpretation |
+| `browser.py` | Playwright/CDP browser control, background window, `extract` and `run_code` execution |
+| `dom.js` | Script for collecting the element list and markers, executed with `page.evaluate` |
+| `memory.py` | Site memory storage, migration, and injection |
+| `webui.py` | Chat window (single HTML file), pywebview bridge, and fallback token-authenticated local server |
 
 ---
 
-## 보안과 한계
+## Security and limitations
 
-nongside는 **사용자 권한으로 실제 브라우저와 Python을 조작하는 도구**입니다. 아래 내용을 이해한 뒤 사용하세요.
+nongside is a **tool that controls the real browser and Python with the user's permissions**. Understand the following before using it.
 
-**`run_code`는 샌드박스가 아닙니다.** 모델이 작성한 Python(playwright) 코드는 에이전트 프로세스의 권한으로 실행됩니다. 허용 목록에 있는 일부 builtins만 노출하지만(`open`, `__import__`, `eval` 등은 빠져 있음), 이는 모델의 실수를 줄일 뿐 보안 경계가 아니며 쉽게 우회할 수 있습니다. 확인 창에 코드가 표시되면 읽은 뒤 승인하세요.
+**`run_code` is not a sandbox.** Python (playwright) code written by the model runs with the permissions of the agent process. Only some builtins are exposed from an allowlist (`open`, `__import__`, `eval`, etc. are excluded), but this only reduces model mistakes; it is not a security boundary and can be bypassed easily. If code appears in the confirmation dialog, read it before approving.
 
-**위험 동작 확인은 키워드 기반 휴리스틱입니다.** 클릭할 요소의 라벨이나 `run_code`의 실제 조작 호출(click, submit, 페이지 안 JS의 fetch 등) 대상에 `삭제`, `제거`, `비우기`, `발송`, `전송`, `보내기`, `등록`, `게시`, `결제`, `승인`, `제출`, `delete`, `remove`, `submit`, `publish`, `pay`, `send` 같은 단어가 있으면 실행 전에 `[y/N]`으로 묻습니다. 전체 목록은 `agent.py`의 `DANGER`에 있습니다.
+**Confirmation for risky actions uses a keyword heuristic.** Before running, the agent asks with `[y/N]` if the label of the element to click or the target of an actual interaction call in `run_code` (click, submit, page-side JS `fetch`, etc.) contains words such as `삭제`, `제거`, `비우기`, `발송`, `전송`, `보내기`, `등록`, `게시`, `결제`, `승인`, `제출`, `delete`, `remove`, `submit`, `publish`, `pay`, or `send`. See `DANGER` in `agent.py` for the full list.
 
-- `검색어 삭제`, `닫기`, `취소`처럼 UI를 정리하는 버튼과 `게시판`·`게시글`·`게시물`은 제외합니다.
-- `press`(Enter 포함), `type`, `navigate`, `attach`는 키워드와 관계없이 확인하지 않습니다. 그 외 클릭과 스크립트도 키워드가 없으면 바로 실행되므로, 라벨이 모호한 파괴 동작은 놓칠 수 있습니다.
-- 비대화형 실행(표준 입력이 터미널이 아님)에서는 확인을 자동으로 거부합니다.
+- UI cleanup buttons, such as `검색어 삭제` (delete search term), `닫기` (close), and `취소` (cancel), and terms such as `게시판` (board), `게시글` (post), and `게시물` (post), are excluded.
+- `press` (including Enter), `type`, `navigate`, and `attach` do not require confirmation regardless of keywords. Other clicks and scripts run immediately if there are no matching keywords, so ambiguous destructive actions may be missed.
+- In non-interactive execution (stdin is not a terminal), confirmation is automatically denied.
 
-**웹페이지 내용이 지시처럼 작동할 수 있습니다(프롬프트 인젝션).** 에이전트는 페이지 텍스트를 사용자 요청과 같은 대화에 넣어 모델에 보냅니다. 페이지에 "이 파일을 업로드해라", "이 주소로 이동해라" 같은 문구가 숨어 있으면 모델이 그것을 따를 수 있습니다. 현재 코드에는 이를 걸러내는 별도 장치가 없고, 위 확인에 걸리지 않는 동작(키워드 없는 `run_code`, `attach`로 로컬 파일 첨부, `navigate`로 임의 주소 이동, `press`로 Enter 제출)은 확인 없이 실행됩니다. 신뢰할 수 없는 페이지에서 쓸 때는 진행 내역을 확인하고, 중요한 계정이 로그인된 프로필에서는 주의하세요.
+**Webpage content can act like instructions (prompt injection).** The agent puts page text in the same conversation as the user's request and sends it to the model. If a page contains hidden text such as "upload this file" or "go to this address," the model may follow it. The current code has no separate mechanism to filter this, and actions not caught by the confirmation above (keyword-free `run_code`, attaching a local file with `attach`, navigating to an arbitrary address with `navigate`, or submitting with Enter via `press`) run without confirmation. When using the agent on untrusted pages, check the progress log and be careful with profiles where important accounts are signed in.
 
-**사용자의 브라우저 프로필과 쿠키를 사용합니다.** CDP attach에서는 그 브라우저의 로그인 세션을 그대로 쓰고, 백그라운드 창에는 쿠키를 복사합니다. 전용 프로필(`.edge-profile`)에도 로그인 세션이 저장됩니다.
+**The user's browser profile and cookies are used.** With CDP attach, the agent uses that browser's login session as-is; the background window receives a copy of the cookies. Login sessions are also stored in the dedicated profile (`.edge-profile`).
 
-**LLM 서버로 전송되는 것.** 요소 목록, `extract`로 읽은 페이지 텍스트, 스크린샷(비전 모델 포함), `ask_user`로 입력한 값(비공개 입력 포함)이 설정한 LLM 서버로 전송됩니다. 망 안 서버를 쓰면 이 데이터는 그 서버까지만 갑니다. 서버의 로그 보관 정책도 함께 확인하세요.
+**What is sent to the LLM server.** The element list, page text read with `extract`, screenshots (including those sent to the vision model), and values entered with `ask_user` (including private input) are sent to the configured LLM server. If you use an in-network server, this data goes only as far as that server. Check the server's log retention policy as well.
 
-**알려진 한계**
+**Known limitations**
 
-- 캡차, 2FA, 인증서 선택, 브라우저 자체 UI(주소창, 권한 팝업 등)는 처리하지 못합니다. 이런 경우 `ask_user`로 사람에게 넘깁니다.
-- 스크린샷은 최후 수단입니다. 해당 페이지에서 `extract`를 한 번도 쓰지 않았다면 첫 `screenshot` 호출은 캡처 대신 추출 텍스트를 돌려주고(추출할 텍스트가 없으면 바로 캡처), 두 번째 호출부터 실제로 캡처합니다. 페이지당 최대 3번입니다.
-- 한 요청당 스텝 상한은 25입니다. 넘으면 그때까지의 진행을 요약해 끝냅니다.
-- 관찰 목록은 프레임을 합쳐 최대 300개 요소입니다. 요소가 아주 많은 페이지에서는 화면에서 먼 요소가 빠질 수 있습니다.
-- Linux에서는 백그라운드 창 숨김 처리가 없고, 전체 동작을 검증하지 않았습니다.
+- The agent cannot handle CAPTCHAs, 2FA, certificate selection, or browser UI itself (address bar, permission popups, etc.). In these cases, it hands off to a person with `ask_user`.
+- Screenshots are a last resort. If `extract` has not been used on the page, the first `screenshot` call returns extracted text instead of a capture (or captures immediately if there is no text to extract); the second call onward takes actual screenshots. A maximum of 3 screenshots per page.
+- The step limit per request is 25. Once exceeded, the agent summarizes progress so far and ends the task.
+- The observation list includes up to 300 elements across frames. On pages with many elements, elements far from the viewport may be omitted.
+- On Linux, there is no background window hiding, and the full behavior has not been verified.
 
 ---
 
-## 기여하기
+## Contributing
 
-<!-- TODO: CONTRIBUTING.md 작성 시 이 섹션을 요약 + 링크로 축소 -->
+<!-- TODO: When CONTRIBUTING.md is written, shorten this section to a summary plus a link -->
 
-- **소스만 추적합니다.** `.env`, `.edge-profile*/`, `.venv/`, `_local/`, `__pycache__/`는 커밋하지 마세요. 프로필에는 로그인 쿠키가 들어 있으니 특히 주의하세요.
-- **구조를 유지합니다.** `dom.js`는 `browser.py`와 같은 폴더에 있어야 합니다(`Path(__file__).with_name("dom.js")`로 로드). 핵심 모듈은 루트에 함께 두며 패키지화하지 않습니다.
-- **외부 의존성을 늘리지 않습니다.** 폐쇄망 반입 부담이 커지므로, 필수 의존성은 `playwright` 하나로 유지하고 나머지는 표준 라이브러리로 해결합니다.
-- **로컬 산출물은 `_local/`에 둡니다.** git이 추적하지 않는 폴더입니다. 테스트에서 사이트 메모리를 쓸 때는 실제 파일 대신 임시 경로를 쓰세요.
-- `requirements-ui.txt`의 주석은 ASCII만 씁니다(Windows pip가 시스템 코드페이지로 읽는 경우가 있음).
-- PR 전에 `python main.py --selftest`가 통과하는지 확인해 주세요. 도구 스키마 형식, 에이전트 루프 한 바퀴, 사이트 메모리 저장과 회상을 검증합니다. 커밋 전에는 `git status`에 `.edge-profile*`, `_local/`, `.env`가 보이지 않는지 확인해 주세요.
+- **Track source files only.** Do not commit `.env`, `.edge-profile*/`, `.venv/`, `_local/`, or `__pycache__/`. Profiles contain login cookies, so take particular care.
+- **Keep the structure.** `dom.js` must be in the same folder as `browser.py` (loaded with `Path(__file__).with_name("dom.js")`). Keep core modules together in the root; do not package them.
+- **Do not add external dependencies.** This increases the burden of transferring files into an air-gapped network, so keep `playwright` as the only required dependency and use the standard library for everything else.
+- **Keep local artifacts in `_local/`.** Git does not track this folder. When tests write site memory, use a temporary path instead of the real file.
+- Use ASCII only in comments in `requirements-ui.txt` (Windows pip may read it using the system code page).
+- Before opening a PR, make sure `python main.py --selftest` passes. It validates the tool schema format, one pass through the agent loop, and site memory storage and recall. Before committing, check that `.edge-profile*`, `_local/`, and `.env` do not appear in `git status`.
 
-<!-- TODO: 공개 테스트 스위트 정리 후 실행 방법 추가 -->
+<!-- TODO: Add instructions after organizing the public test suite -->
 
 ---
 
 ## Disclaimer
 
-nongside는 사용자의 브라우저와 계정으로 실제 동작을 수행합니다. 에이전트가 수행한 클릭·입력·발송·결제 등 모든 동작과 그 결과에 대한 책임은 사용자에게 있습니다.
+nongside performs real actions using the user's browser and accounts. The user is responsible for all actions performed by the agent, including clicks, input, sending, and payment, and for their results.
 
-- 이 소프트웨어는 있는 그대로 제공되며, 모델의 오판이나 웹페이지 내용에 의한 오동작(프롬프트 인젝션 포함)으로 생긴 결과를 보증하지 않습니다.
-- 조직 내부망에 도입할 때는 소속 조직의 보안·자동화 정책과 승인 절차를 먼저 확인하세요.
-- 자동화로 접근하는 각 웹사이트의 이용약관과 robots 정책, 관련 법규를 확인하고 지켜 주세요.
-- 연결하는 LLM 서버(또는 프록시/게이트웨이)의 이용 조건과 데이터 처리 정책을 준수할 책임은 사용자에게 있습니다.
-- 이 프로젝트는 Anthropic, Microsoft, Google 등 언급된 어떤 회사와도 제휴하거나 보증받지 않았습니다.
+- This software is provided as is, with no warranty for outcomes caused by model errors or unintended actions triggered by webpage content (including prompt injection).
+- Before deploying it on an organization's internal network, check the organization's security and automation policies and approval procedures.
+- Check and follow the terms of service, robots policies, and applicable laws for every website accessed through automation.
+- The user is responsible for complying with the terms of use and data processing policies of the connected LLM server (or proxy/gateway).
+- This project is not affiliated with or endorsed by Anthropic, Microsoft, Google, or any other company mentioned.
 
 ---
 
 ## License
 
-MIT. [LICENSE](LICENSE)를 참고하세요.
+MIT. See [LICENSE](LICENSE).
 
 ---
 
 <p align="center">
-  <em>폐쇄망을 전제로 만든 브라우저 에이전트</em>
+  <em>A browser agent built for air-gapped networks</em>
   <br/>
-  <sub>망 안의 LLM 서버와 이미 설치된 브라우저로.</sub>
+  <sub>With an LLM server inside your network and the browser you already have.</sub>
 </p>
