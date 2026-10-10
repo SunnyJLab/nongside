@@ -1,0 +1,2 @@
+# Optional: native chat UI window. Without it the chat UI falls back to an Edge/Chrome --app window.
+pywebview==6.2.1
