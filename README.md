@@ -7,16 +7,16 @@
 </p>
 
 <p align="center">
-  <strong>A browser agent built for air-gapped (closed) networks</strong>
+  <strong>An enterprise browser agent that runs on Claude</strong>
   <br/>
-  <sub>It runs without a cloud API, using an LLM server inside your network and the Edge or Chrome already installed on the PC. Tell it what you need in plain language, and it clicks and reads for you.</sub>
+  <sub>It learns the path. Next time, it runs it. On closed-network sites Claude was never trained on, it reads the screen and finds the way the first time. The path that worked stays on this machine, and the next request starts there. It uses the Edge or Chrome already installed on the PC.</sub>
 </p>
 
 <p align="center">
   <img alt="Offline install" src="https://img.shields.io/badge/install-offline-0B7285?style=flat-square">
   <img alt="Python 3" src="https://img.shields.io/badge/python-3-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="playwright 1.38+" src="https://img.shields.io/badge/playwright-%3E%3D1.38-2EAD33?style=flat-square">
-  <img alt="LLM: Anthropic Messages API compatible" src="https://img.shields.io/badge/LLM-Anthropic%20Messages%20API%20compatible-555?style=flat-square">
+  <img alt="Runs on Claude (Anthropic Messages API)" src="https://img.shields.io/badge/runs%20on-Claude%20%28Anthropic%20Messages%20API%29-D97757?style=flat-square">
   <img alt="Status: beta" src="https://img.shields.io/badge/status-beta-orange?style=flat-square">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green?style=flat-square"></a>
 </p>
@@ -33,13 +33,14 @@
   <a href="#contributing">Contributing</a>
 </p>
 
-On an air-gapped network with the internet blocked, you usually cannot use a cloud LLM API, `playwright install`, or a browser download. nongside is a browser agent built for that constraint.
+On a closed network the public internet is blocked, and usually the only outside address allowed is a gateway your company approves. `playwright install` and browser downloads are not available either. nongside calls Claude only at the address you set, so on a closed network you point it at that gateway.
 
-- **LLM**: One URL for an Anthropic Messages API compatible server running inside your network is enough. It calls the server with the Python standard library (`http.client`), with no official SDK.
+- **Claude**: It calls Claude through the Anthropic Messages API. The default is the public Anthropic API; on a closed network, set your company's approved gateway. It uses the Python standard library (`http.client`), with no official SDK.
 - **Browser**: It uses the Edge (or Chrome) already installed on the PC. It does not download a browser binary.
 - **Install**: The only required package is `playwright`. On Windows, you bring in 4 wheels including dependencies, about 37MB in total. No administrator rights are needed.
-- **Model**: It turns the screen into a text list before sending it, so it is designed to work with models that have no image input. You can set a separate vision model for when a screenshot is needed.
-- **Data**: The only connections the agent (Python) opens itself are the LLM server you set and `127.0.0.1`. There is no code that collects usage stats, checks for updates, or calls an external CDN. For where the browser connects, and the caveat about defaults, see [Network boundaries](#3-network-boundaries).
+- **Memory**: It remembers the site, the way in, and the steps that worked, on this machine. The next request starts from that saved path. Input values are not saved.
+- **Screen as text**: Each turn it sends the screen to Claude as an element list. Screenshots are a last resort.
+- **Data**: The only connections the agent (Python) opens itself are the Claude endpoint you set and `127.0.0.1`. There is no code that collects usage stats, checks for updates, or calls an external CDN. For where the browser connects, and the caveat about defaults, see [Network boundaries](#3-network-boundaries).
 
 Ask it something like "Summarize just the three new posts on the notice board this week" or "Organize the table on this page." The agent reads the page's element list, chooses navigation, clicks, typing, and reading on its own, then returns the result.
 
@@ -51,11 +52,10 @@ Ask it something like "Summarize just the three new posts on the notice board th
 
 | Constraint on an air-gapped network | Where tools usually get stuck | How nongside does it |
 | :--- | :--- | :--- |
-| External LLM APIs blocked | Tools built around a cloud API cannot even start | Set only the in-network LLM server URL. No external auth or SDK |
+| Only one approved outside address | Tools that need several cloud services do not fit the allowlist | Calls Claude only at the one address you set (the public API, or your company gateway). No other external auth or SDK |
 | No internet downloads | You have to transfer in `playwright install`, a dedicated browser, and many dependencies | Uses the installed Edge/Chrome. The only required package is `playwright` |
-| Text-oriented internal models | Screenshot-based agents require a vision model | Each turn it sends the screen as element-list text. Screenshots are a last resort; a vision model is optional |
-| Data must not leave the network | Unclear where a tool sends what | Documents the connections the agent opens itself and what it sends to the LLM server. Browser navigation follows the network's access controls |
-| Internal sites that search cannot find | The agent cannot find the site and wanders | Site memory and the site playbook store internal site URLs and paths for reuse |
+| Data must not leave the network | Unclear where a tool sends what | Documents the connections the agent opens itself and what it sends to Claude. Browser navigation follows the network's access controls |
+| Internal sites Claude was never trained on, that search cannot find | The agent cannot find the site and wanders, every time | The first time it reads the screen and finds the way. Site memory and the site playbook keep the URL and the path that worked, and the next request starts there |
 | Clicks you cannot undo | Sends, deletes, and payments run without confirmation | Clicks and scripts that match danger keywords ask for confirmation before they run. Because it is keyword-based, it cannot block every case |
 
 ---
@@ -68,7 +68,7 @@ What you need
 
 - Python 3.9 or later <!-- TODO: Parses as 3.9 syntax, and --selftest passes on 3.9.6. Update after confirming the minimum version tested through an actual browser launch -->
 - Microsoft Edge or Google Chrome
-- An Anthropic Messages API compatible LLM server and an API key (or a Bearer token)
+- An Anthropic API key for Claude, or on a closed network, your company gateway's address and key (or a Bearer token)
 
 **1. Virtual environment and dependencies**
 
@@ -93,18 +93,20 @@ python3 -m venv .venv
 
 You do not need `playwright install`. If you want a native chat window, also install `requirements-ui.txt` (pywebview). If you do not, the chat window opens as an Edge/Chrome `--app` window.
 
-**2. LLM server and browser settings**
+**2. Claude and browser settings**
 
 Create a `.env` file at the repo root. `.env` is listed in `.gitignore`, so it is not committed.
 
 ```ini
-# In-network LLM server (Anthropic Messages API compatible)
-ANTHROPIC_BASE_URL=http://llm.internal.example:8000
-ANTHROPIC_API_KEY=your-key        # any value if the server does not use auth
-AGENT_MODEL=your-model-name       # name of the model loaded on the server
+# Claude (Anthropic Messages API)
+ANTHROPIC_API_KEY=your-key
+
+# On a closed network, point it at your company's approved gateway
+# ANTHROPIC_BASE_URL=https://claude-gateway.internal.example
+# AGENT_MODEL=model-name-your-gateway-serves
 ```
 
-The defaults for `ANTHROPIC_BASE_URL` and `AGENT_MODEL` are the public Anthropic API (`https://api.anthropic.com`, `claude-sonnet-4-5`). When you use an internal server, set both.
+The defaults for `ANTHROPIC_BASE_URL` and `AGENT_MODEL` are the public Anthropic API (`https://api.anthropic.com`, `claude-sonnet-4-5`). On a closed network, set both to your gateway's address and the model name it serves.
 
 **On machines without Edge (most macOS and Linux), you must put `AGENT_CHANNEL=chrome` in `.env`.** The default is `msedge`, and it does not switch to Chrome on its own. Without Edge it fails to start with `Chromium distribution 'msedge' is not found`. You do not need the `playwright install msedge` that error suggests.
 
@@ -559,7 +561,7 @@ MIT. See [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <em>A browser agent built for air-gapped networks</em>
+  <em>An enterprise browser agent that runs on Claude</em>
   <br/>
-  <sub>With an LLM server inside your network and the browser you already have.</sub>
+  <sub>It learns the path. Next time, it runs it.</sub>
 </p>
