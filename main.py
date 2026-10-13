@@ -211,6 +211,7 @@ def chat_loop(browser, io, first_message=None):
 def _task_loop(browser, io, alive, idle):
     """UI에서 들어온 작업을 차례로 실행한다. alive()가 False가 되면 끝난다."""
     messages = []
+    last_task = [time.monotonic()]
     tab_info = getattr(browser, "tab_info", None)
     last = [0.0]
 
@@ -225,8 +226,7 @@ def _task_loop(browser, io, alive, idle):
 
     refresh_tab(force=True)
     prepare = getattr(browser, "prepare_background", None)
-    # 챗 창이 뜬 뒤(포커스를 받은 뒤) 숨긴 백그라운드 창을 미리 띄운다 — 첫 대화에서 포커스를 뺏지 않게.
-    # 창이 뜨기 전에 띄우면 포커스를 챗 창 이전 창으로 돌려버린다
+    # 첫 사용 지연을 줄이도록 쿠키 없이 headless 브라우저를 미리 띄운다.
     warm_at = time.monotonic() + 1.5
     while alive():
         if io.new_session.is_set():  # 새 채팅: 대화 기록을 비운다
@@ -243,6 +243,14 @@ def _task_loop(browser, io, alive, idle):
                     _p()
                 except Exception:
                     pass
+            if time.monotonic() - last_task[0] >= BG_IDLE_SEC:
+                close_background = getattr(browser, "close_background", None)
+                if close_background:
+                    try:
+                        close_background()
+                    except Exception:
+                        pass
+                last_task[0] = time.monotonic()
             refresh_tab()
             idle()
             continue
@@ -265,12 +273,14 @@ def _task_loop(browser, io, alive, idle):
             run_task(task, browser, io, messages, use_tab=use_tab, tab_url=tab_url or None)
         finally:
             io.busy = False
+            last_task[0] = time.monotonic()
             refresh_tab(force=True)
             io._drop = False  # 새 채팅으로 중단된 이전 작업의 출력 버리기 끝
 
 
 UI_BROWSERS = ("msedge", "chrome")
 TAB_REFRESH_SEC = 1.5  # 챗 창 탭 칩 갱신 주기
+BG_IDLE_SEC = 600  # 백그라운드 브라우저 유휴 종료 시간
 
 
 def ui_browser():

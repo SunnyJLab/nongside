@@ -1,5 +1,6 @@
 import builtins
 import contextlib
+import ctypes
 import html
 import io
 import json
@@ -36,6 +37,71 @@ def background_enabled():
 
 
 BG_SIZE = {"width": 1280, "height": 900}
+OWNER_FILE = "nongside-owner.json"
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32)]
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint64) for name in
+                ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                 "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+
+class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION), ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+def _close_handle(handle):
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+
+
+def _kill_on_exit_job(proc):
+    """Windows 부모 종료 시 연결된 Chromium 프로세스 트리를 정리한다."""
+    if sys.platform != "win32":
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        job = kernel32.CreateJobObjectW(None, None)
+        kernel32.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+                                                       ctypes.c_uint32]
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        if not job:
+            raise OSError(ctypes.get_last_error(), "CreateJobObjectW")
+        limits = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        limits.BasicLimitInformation.LimitFlags = 0x2000 | 0x800
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+            raise OSError(ctypes.get_last_error(), "SetInformationJobObject")
+        if not kernel32.AssignProcessToJobObject(job, int(proc._handle)):
+            raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject")
+        return job
+    except Exception as e:
+        try:
+            if "job" in locals() and job:
+                _close_handle(job)
+        except Exception:
+            pass
+        print(f"[경고] 백그라운드 Job Object 설정 실패: {type(e).__name__}", file=sys.stderr)
+        return None
+
+
+def _mask_profile(text):
+    return re.sub(r"(?<!\S)\S*nongside-bg-[^\s\"'<>]*", "<profile>", text)
 
 # 백그라운드 탭의 팝업도 같은 탭 컨텍스트 안에서 처리한다. noopener만 남겨도 팝업으로 판정되므로
 # (HTML 표준) popup=0을 붙인다.
@@ -238,6 +304,7 @@ class Browser:
         self._bg = None
         self.bg_ctx = None
         self._bg_process = None
+        self._bg_job = None
         self._bg_profile = None
         self._bg_pid = None
         self._bg_executable = None
@@ -403,20 +470,20 @@ class Browser:
                 seen.append(c)
         return seen
 
-    def _bg_page(self, fresh):
+    def _bg_page(self, fresh, sync_cookies=True):
         """백그라운드 탭. 백그라운드 브라우저가 죽었으면(프로세스 종료·사용자가 닫음) 한 번 새로 띄운다.
         sync API는 다음 호출 때에야 연결 끊김을 알기 때문에 is_connected()만으로는 부족하다."""
         try:
-            return self._bg_page_once(fresh)
+            return self._bg_page_once(fresh, sync_cookies)
         except Exception:
             self._close_bg()
         try:
-            return self._bg_page_once(fresh)
+            return self._bg_page_once(fresh, sync_cookies)
         except Exception:
             self._close_bg()
             return None
 
-    def _bg_page_once(self, fresh):
+    def _bg_page_once(self, fresh, sync_cookies=True):
         """백그라운드 탭. fresh면 새 탭, 아니면 열려 있는 마지막 백그라운드 탭을 재사용한다.
         Headless 브라우저를 대화 내내 재사용한다.
         실행에 실패하면 None — 호출한 쪽이 사용자 브라우저로 폴백한다."""
@@ -441,7 +508,7 @@ class Browser:
                     self.bg_channel = channel
                     break
                 except Exception as e:
-                    reason = (str(e).splitlines() or [""])[0].replace(str(self._bg_profile), "<profile>")[:120]
+                    reason = _mask_profile((str(e).splitlines() or [""])[0])[:120]
                     stage = "CDP/context" if self._bg is not None else "launch"
                     print(f"[경고] 백그라운드 {channel} {stage} 실패: {type(e).__name__}: {reason}", file=sys.stderr)
                     self._close_bg()
@@ -453,18 +520,19 @@ class Browser:
             self.bg_ctx.on("page", self._adopt_popup)
             self.bg_ctx.add_init_script(_TAB_POPUP_JS)
         # 사용자 브라우저의 로그인 쿠키를 매번 동기화한다 (사용자가 방금 로그인했을 수 있다)
-        try:
-            cookies = self.ctx.cookies()
-        except Exception:
-            cookies = []
-        try:
-            self.bg_ctx.add_cookies(cookies)
-        except Exception:
-            for c in cookies:  # 형식이 안 맞는 쿠키 하나 때문에 전부 버리지 않는다
-                try:
-                    self.bg_ctx.add_cookies([c])
-                except Exception:
-                    pass
+        if sync_cookies:
+            try:
+                cookies = self.ctx.cookies()
+            except Exception:
+                cookies = []
+            try:
+                self.bg_ctx.add_cookies(cookies)
+            except Exception:
+                for c in cookies:  # 형식이 안 맞는 쿠키 하나 때문에 전부 버리지 않는다
+                    try:
+                        self.bg_ctx.add_cookies([c])
+                    except Exception:
+                        pass
         alive = self._bg_pages()
         if alive and not fresh:
             return alive[-1]
@@ -505,6 +573,7 @@ class Browser:
         return next((str(Path(p)) for p in candidates if p and Path(p).is_file()), None)
 
     def _launch_background(self, channel):
+        self._reap_stale_profiles()
         exe = self._browser_executable(channel)
         if not exe:
             raise FileNotFoundError(f"설치된 {channel} 실행 파일을 찾지 못했습니다")
@@ -512,6 +581,7 @@ class Browser:
         self._bg_profile = profile
         self._bg_executable = exe
         try:
+            (profile / OWNER_FILE).write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
             args = [exe, "--headless=new", "--remote-debugging-port=0",
                     "--remote-debugging-address=127.0.0.1", f"--user-data-dir={profile}",
                     "--window-size=1280,900", "--no-first-run", "--no-default-browser-check",
@@ -523,6 +593,7 @@ class Browser:
                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                     **({"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}))
             self._bg_process = proc
+            self._bg_job = _kill_on_exit_job(proc)
             active = profile / "DevToolsActivePort"
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
@@ -544,16 +615,21 @@ class Browser:
                             time.sleep(0.1)
                             continue
                         raise
-                    self._bg = browser
-                    session = browser.new_browser_cdp_session()
                     try:
-                        self._bg_pid = next((p["id"] for p in session.send("SystemInfo.getProcessInfo").get("processInfo", [])
-                                             if p.get("type") == "browser"), None)
-                    finally:
-                        session.detach()
-                    if self._bg_pid is None:
+                        session = browser.new_browser_cdp_session()
+                        try:
+                            self._bg_pid = next((p["id"] for p in session.send("SystemInfo.getProcessInfo").get("processInfo", [])
+                                                 if p.get("type") == "browser"), None)
+                        finally:
+                            session.detach()
+                    except Exception:
+                        browser.close()
+                        raise
+                    if self._bg_pid is None or (self._bg_pid != proc.pid and
+                                                self._bg_pid not in (self._profile_process_ids() or [])):
                         browser.close()
                         raise RuntimeError("CDP에서 브라우저 프로세스 소유권 확인 실패")
+                    self._bg = browser
                     return browser
                 except (OSError, ValueError, IndexError):
                     time.sleep(0.1)
@@ -610,7 +686,14 @@ class Browser:
     def prepare_background(self):
         """챗 UI를 띄울 때 headless 백그라운드 브라우저를 미리 준비한다."""
         if background_enabled() and self.bg_ctx is None:
-            self._bg_page(fresh=False)
+            self._bg_page(fresh=False, sync_cookies=False)
+
+    def close_background(self):
+        """실행 중인 백그라운드 브라우저를 닫았는지 반환한다."""
+        if self._bg is None and self.bg_ctx is None and self._bg_process is None:
+            return False
+        self._close_bg()
+        return True
 
     def _close_bg(self):
         profile_live = False
@@ -638,6 +721,7 @@ class Browser:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     try:
+                        proc.kill()
                         proc.wait(timeout=2)
                     except (OSError, subprocess.SubprocessError) as e:
                         print(f"[경고] 백그라운드 프로세스 종료 실패: {type(e).__name__}", file=sys.stderr)
@@ -675,20 +759,26 @@ class Browser:
             self._bg = self.bg_ctx = self._bg_process = None
             self._bg_pid = None
             self._bg_executable = None
+            job, self._bg_job = self._bg_job, None
+            if job:
+                _close_handle(job)
 
-    def _profile_process_ids(self):
-        profile = self._bg_profile
+    def _profile_process_ids(self, profile=None):
+        profile = profile if profile is not None else self._bg_profile
         if profile is None:
             return []
         if sys.platform == "win32":
             env = os.environ.copy()
             env["NONGSIDE_PROFILE_PATH"] = str(profile)
-            env["NONGSIDE_BROWSER_NAME"] = Path(self._bg_executable or "").name.casefold()
+            current = self._bg_profile is not None and Path(profile) == Path(self._bg_profile)
+            names = [Path(self._bg_executable).name] if current and self._bg_executable else ["msedge.exe", "chrome.exe"]
+            env["NONGSIDE_BROWSER_NAMES"] = ",".join(names)
             script = r"""$ErrorActionPreference = 'Stop'
 $profilePattern = [regex]::Escape($env:NONGSIDE_PROFILE_PATH)
 $pattern = '(?i)(?:^|\s)"?--user-data-dir="?' + $profilePattern + '"?(?=\s|$)'
+$names = $env:NONGSIDE_BROWSER_NAMES.Split(',')
 Get-CimInstance Win32_Process | Where-Object { $_.Name -and
-    $_.Name.Equals($env:NONGSIDE_BROWSER_NAME, [StringComparison]::OrdinalIgnoreCase) -and
+    $names -contains $_.Name -and
     $_.CommandLine -and $_.CommandLine -match $pattern } | ForEach-Object { $_.ProcessId }
 """
             try:
@@ -726,11 +816,72 @@ Get-CimInstance Win32_Process | Where-Object { $_.Name -and
             out = result.stdout
             for line in out.splitlines():
                 pid, _, command = line.strip().partition(" ")
-                if pid.isdigit() and f"--user-data-dir={profile}" in command:
+                if pid.isdigit() and re.search(
+                        r"(?:^|\s)--user-data-dir=" + re.escape(str(profile)) + r"(?=\s|$)", command):
                     found.append(int(pid))
         except (OSError, subprocess.SubprocessError):
             return None
         return found
+
+    @staticmethod
+    def _pid_alive(pid):
+        try:
+            pid = int(pid)
+            if sys.platform == "win32":
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel32.OpenProcess.restype = ctypes.c_void_p
+                kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+                kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+                kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+                handle = kernel32.OpenProcess(0x1000, False, pid)
+                if not handle:
+                    return ctypes.get_last_error() != 87
+                try:
+                    code = ctypes.c_uint32()
+                    return not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == 259
+                finally:
+                    _close_handle(handle)
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return True
+
+    def _reap_stale_profiles(self):
+        removed = 0
+        try:
+            root = Path(tempfile.gettempdir()).resolve()
+            for candidate in root.glob("nongside-bg-*"):
+                try:
+                    profile = candidate.resolve()
+                    if profile.parent != root or not profile.name.startswith("nongside-bg-"):
+                        continue
+                    owner = json.loads((profile / OWNER_FILE).read_text(encoding="utf-8"))
+                    pid = owner.get("pid")
+                    if type(pid) is not int or pid == os.getpid() or self._pid_alive(pid):
+                        continue
+                    scan = self._profile_process_ids(profile)
+                    if scan is None:
+                        continue
+                    if scan:
+                        self._kill_bg_processes(set(scan))
+                        deadline = time.monotonic() + 2
+                        while scan and time.monotonic() < deadline:
+                            time.sleep(0.1)
+                            scan = self._profile_process_ids(profile)
+                        if scan is None or scan:
+                            continue
+                    shutil.rmtree(profile)
+                    removed += 1
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if removed:
+            print(f"[정보] 오래된 백그라운드 프로필 {removed}개 정리", file=sys.stderr)
 
     def _kill_bg_processes(self, pids):
         own_pid = os.getpid()
