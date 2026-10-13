@@ -5,7 +5,10 @@ import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path, PureWindowsPath
@@ -28,25 +31,14 @@ TAB_INFO_JS = """() => {
 
 
 def background_enabled():
-    """AGENT_BACKGROUND=0이면 예전처럼 사용자 브라우저에서 바로 이동한다(백그라운드 창을 막는 환경용)."""
+    """AGENT_BACKGROUND=0이면 사용자 브라우저에서 바로 이동한다."""
     return (os.environ.get("AGENT_BACKGROUND") or "1").strip().lower() not in ("0", "false", "no", "off")
 
 
-# 백그라운드 브라우저 창 위치. 일부 환경에서 --headless가 막히는 경우 일반 창을 화면 밖에 띄운다
-# (-32000은 Windows가 최소화 창에 쓰는 좌표라 피한다)
-BG_POS = (-20000, -20000)
-BG_ARGS = [
-    f"--window-position={BG_POS[0]},{BG_POS[1]}", "--window-size=1280,900",
-    "--no-first-run", "--no-default-browser-check",
-    # 화면 밖 창은 가려진 창으로 판정돼 렌더링·타이머가 멈출 수 있다 — 끈다
-    "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
-    # --disable-features는 playwright 기본 목록(HttpsUpgrades 등)을 덮어쓰므로 넘기지 않는다
-    "--disable-background-timer-throttling",
-]
+BG_SIZE = {"width": 1280, "height": 900}
 
-# 백그라운드 창의 window.open 팝업은 같은 숨긴 창의 탭으로 연다. 크기 지정 팝업은 새 창으로 뜨면서
-# 크롬이 화면 안으로 끌어오고, 숨김(page 이벤트)은 sync API가 다음 playwright 호출 때에야 돌려
-# LLM 대기 내내 보인다. noopener만 남겨도 팝업으로 판정되므로(HTML 표준) popup=0을 붙인다
+# 백그라운드 탭의 팝업도 같은 탭 컨텍스트 안에서 처리한다. noopener만 남겨도 팝업으로 판정되므로
+# (HTML 표준) popup=0을 붙인다.
 _TAB_POPUP_JS = """(() => {
   const open = window.open;
   window.open = function (url, name, features) {
@@ -103,188 +95,6 @@ class _StopTime:
     def __getattr__(self, name):
         return getattr(time, name)
 
-
-class _WinHide:
-    """Windows 전용(ctypes): 백그라운드 브라우저 창을 화면 밖·작업표시줄 밖에 두고,
-    새 창이 가져간 포커스를 원래 창으로 돌려준다. 다른 OS에서는 아무것도 하지 않는다."""
-
-    GWL_EXSTYLE = -20
-    WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = 0x80, 0x40000
-    SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED = 0x1, 0x4, 0x10, 0x20
-    SW_HIDE, SW_SHOWNOACTIVATE = 0, 4
-
-    def __init__(self):
-        self.ok = False
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-            from ctypes import wintypes as w
-            u = ctypes.WinDLL("user32", use_last_error=True)
-            self._ct, self._w, self._u = ctypes, w, u
-            u.GetForegroundWindow.restype = w.HWND
-            u.GetWindowThreadProcessId.argtypes = [w.HWND, ctypes.POINTER(w.DWORD)]
-            u.GetWindowThreadProcessId.restype = w.DWORD
-            u.IsWindowVisible.argtypes = [w.HWND]
-            u.GetClassNameW.argtypes = [w.HWND, w.LPWSTR, ctypes.c_int]
-            u.ShowWindow.argtypes = [w.HWND, ctypes.c_int]
-            u.SetWindowPos.argtypes = [w.HWND, w.HWND, ctypes.c_int, ctypes.c_int,
-                                       ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-            u.SetForegroundWindow.argtypes = [w.HWND]
-            u.BringWindowToTop.argtypes = [w.HWND]
-            u.IsWindow.argtypes = [w.HWND]
-            u.AttachThreadInput.argtypes = [w.DWORD, w.DWORD, w.BOOL]
-            long_ptr = ctypes.c_ssize_t
-            get = getattr(u, "GetWindowLongPtrW", None) or u.GetWindowLongW
-            set_ = getattr(u, "SetWindowLongPtrW", None) or u.SetWindowLongW
-            get.argtypes, get.restype = [w.HWND, ctypes.c_int], long_ptr
-            set_.argtypes, set_.restype = [w.HWND, ctypes.c_int, long_ptr], long_ptr
-            self._get, self._set = get, set_
-            self._enum_t = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
-            u.EnumWindows.argtypes = [self._enum_t, w.LPARAM]
-            self._tid = ctypes.WinDLL("kernel32").GetCurrentThreadId
-            self.ok = True
-        except Exception:
-            self.ok = False
-
-    def foreground(self):
-        return self._u.GetForegroundWindow() if self.ok else None
-
-    def pid_of(self, hwnd):
-        """창을 소유한 프로세스 id. 실패하면 None."""
-        if not self.ok or not hwnd:
-            return None
-        owner = self._w.DWORD()
-        self._u.GetWindowThreadProcessId(hwnd, self._ct.byref(owner))
-        return owner.value or None
-
-    def _windows(self, pid):
-        """pid 프로세스의 보이는 크롬 최상위 창들."""
-        found = []
-        buf = self._ct.create_unicode_buffer(64)
-
-        def cb(hwnd, _):
-            owner = self._w.DWORD()
-            self._u.GetWindowThreadProcessId(hwnd, self._ct.byref(owner))
-            if owner.value == pid and self._u.IsWindowVisible(hwnd):
-                self._u.GetClassNameW(hwnd, buf, 64)
-                if buf.value.startswith("Chrome_WidgetWin"):
-                    found.append(hwnd)
-            return True
-
-        self._u.EnumWindows(self._enum_t(cb), 0)
-        return found
-
-    def hide(self, pid, prev=None, wait=1.0):
-        """pid의 창을 작업표시줄에서 빼고 화면 밖으로 옮긴 뒤 prev 창에 포커스를 돌려준다.
-        창은 페이지를 만든 직후 비동기로 뜰 수 있어 새 창이 보일 때까지 최대 wait초 다시 찾는다.
-        새로 숨긴 창 수를 반환."""
-        if not self.ok or not pid:
-            return 0
-        u, n, start = self._u, 0, time.monotonic()
-        # 이미 숨긴 창만 있으면 새 탭이 기존 창에 열린 것이다 — 새 창이 뜰 수 있는 짧은 시간만 기다린다
-        grace = wait if not self._windows(pid) else min(wait, 0.25)
-        while True:
-            wins = self._windows(pid)
-            for hwnd in wins:
-                ex = self._get(hwnd, self.GWL_EXSTYLE)
-                want = (ex | self.WS_EX_TOOLWINDOW) & ~self.WS_EX_APPWINDOW
-                if ex != want:
-                    self._set(hwnd, self.GWL_EXSTYLE, want)
-                    # 작업표시줄은 창을 다시 보일 때 스타일을 반영한다(화면 밖이라 깜빡임이 안 보인다)
-                    u.ShowWindow(hwnd, self.SW_HIDE)
-                    u.ShowWindow(hwnd, self.SW_SHOWNOACTIVATE)
-                    n += 1
-                u.SetWindowPos(hwnd, None, BG_POS[0], BG_POS[1], 0, 0,
-                               self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE
-                               | self.SWP_FRAMECHANGED)
-            if n or time.monotonic() - start >= grace:
-                break
-            time.sleep(0.05)
-        # 포커스가 아직 백그라운드 창에 있을 때만 되돌린다 — 그사이 사용자가 고른 다른 창은 뺏지 않는다
-        cur = u.GetForegroundWindow()
-        if not cur or self.pid_of(cur) == pid:
-            self.restore(prev)
-        return n
-
-    def restore(self, prev):
-        """prev 창이 포커스를 잃었으면 되돌린다. 다른 프로세스 창은 SetForegroundWindow만으로는
-        거부될 수 있어 지금 포커스 창의 입력 스레드에 잠깐 붙어서 요청한다."""
-        if not self.ok or not prev or not self._u.IsWindow(prev):
-            return
-        u = self._u
-        cur = u.GetForegroundWindow()
-        if cur == prev:
-            return
-        me = self._tid()
-        fg = u.GetWindowThreadProcessId(cur, None) if cur else 0
-        attached = bool(fg and fg != me and u.AttachThreadInput(me, fg, True))
-        try:
-            u.BringWindowToTop(prev)
-            u.SetForegroundWindow(prev)
-        finally:
-            if attached:
-                u.AttachThreadInput(me, fg, False)
-
-
-# macOS: JXA(osascript)의 ObjC 브리지로 NSRunningApplication을 부른다. 손쉬운 사용 권한이 필요 없다.
-# 창이 비동기로 뜨거나 새 창이 앱 숨김을 풀 수 있어 잠깐 동안 여러 번 반복한다.
-_MAC_HIDE_JS = r"""
-ObjC.import('AppKit');
-function app(pid) {
-  if (!pid) return null;
-  const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
-  return (a && !a.isNil()) ? a : null;
-}
-function run(argv) {
-  const pid = +argv[0], prev = +argv[1];
-  for (let i = 0; i < 8; i++) {
-    const a = app(pid);
-    if (!a) { delay(0.15); continue; }  // 앱 등록 전일 수 있다
-    if (!a.hidden) a.hide();
-    const p = app(prev);
-    if (p && !p.active) p.activateWithOptions(2);  // NSApplicationActivateIgnoringOtherApps
-    delay(0.15);
-  }
-}
-"""
-_MAC_FRONT_JS = "ObjC.import('AppKit'); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier"
-
-
-class _MacHide:
-    """macOS 전용: 화면 밖 좌표는 macOS가 화면 안으로 되돌리므로 백그라운드 브라우저 앱을 숨기고(⌘H와 같음)
-    창이 뜨기 전 맨 앞에 있던 앱을 다시 활성화한다. 숨김은 osascript를 백그라운드로 띄워 기다리지 않는다."""
-
-    def __init__(self):
-        import shutil
-        self.ok = sys.platform == "darwin" and bool(shutil.which("osascript"))
-
-    def foreground(self):
-        """맨 앞 앱의 pid. 실패하면 None."""
-        if not self.ok:
-            return None
-        import subprocess
-        try:
-            out = subprocess.run(["osascript", "-l", "JavaScript", "-e", _MAC_FRONT_JS],
-                                 capture_output=True, text=True, timeout=3).stdout.strip()
-            return int(out) if out.isdigit() else None
-        except Exception:
-            return None
-
-    def hide(self, pid, prev=None, wait=None):
-        if not self.ok or not pid:
-            return 0
-        import subprocess
-        try:
-            subprocess.Popen(["osascript", "-l", "JavaScript", "-e", _MAC_HIDE_JS, str(pid), str(prev or 0)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return 1
-        except Exception:
-            return 0
-
-
-def _window_hider():
-    return _MacHide() if sys.platform == "darwin" else _WinHide()
 
 # extract 결과 캡. aria_snapshot은 요소마다 role/들여쓰기 줄이 붙어 순수 텍스트보다
 # 같은 내용에 약 1.5~2배 길이가 필요하므로, 텍스트 방식 4000자와 비슷한 분량이 남도록 올렸다.
@@ -424,12 +234,13 @@ class Browser:
         self._titles = {}  # page -> (url, title) 배경 탭 제목 캐시
         self.ui_page = None
         self.mode = "시작 전"  # 설정 화면 표시용: attach/새로 실행 여부
-        # 백그라운드 브라우저(화면 밖 창): 사용자 탭에 없는 내용을 찾을 때 처음 필요할 때 띄우고 재사용한다
+        # 백그라운드 브라우저: 사용자 탭에 없는 내용을 찾을 때 처음 필요할 때 띄우고 재사용한다
         self._bg = None
         self.bg_ctx = None
-        self._bg_pid = None  # 백그라운드 브라우저 프로세스 id (창 숨기기용)
-        self._bg_fg = None  # 백그라운드 창이 뜨기 직전의 포커스 창 — 새 창이 뺏어가면 여기로 돌려준다
-        self._win = _window_hider()  # Windows: 화면 밖·작업표시줄 밖 / macOS: 앱 숨김
+        self._bg_process = None
+        self._bg_profile = None
+        self._bg_pid = None
+        self._bg_executable = None
         self.user_page = None  # 사용자가 보고 있는 탭 (턴 시작마다 focus_user_tab이 갱신)
         # 대화에 고정한 사용자 탭. 첫 요청에서 정하고 새 채팅(unpin) 전까지 사용자가 탭을 바꿔도 유지한다
         self.pinned = None
@@ -607,16 +418,14 @@ class Browser:
 
     def _bg_page_once(self, fresh):
         """백그라운드 탭. fresh면 새 탭, 아니면 열려 있는 마지막 백그라운드 탭을 재사용한다.
-        화면 밖 창으로 띄운 브라우저를 대화 내내 재사용한다(창이 뜰 때만 포커스를 되돌린다).
+        Headless 브라우저를 대화 내내 재사용한다.
         실행에 실패하면 None — 호출한 쪽이 사용자 브라우저로 폴백한다."""
-        prev = None  # 새 창이 포커스를 가져가면 돌려줄 창(macOS는 앱 pid). 새 창을 띄울 때만 읽는다
         try:  # 백그라운드 브라우저가 죽었거나(프로세스 종료·사용자가 닫음) 연결이 끊겼으면 새로 띄운다
             if self._bg is not None and not self._bg.is_connected():
                 self._close_bg()
         except Exception:
             self._close_bg()
         if self.bg_ctx is None:
-            prev = self._win.foreground()
             src = self.user_page if self.user_page and not self.user_page.is_closed() else None
             ua = lang = None
             try:  # 사용자 브라우저와 같은 UA·언어로 맞춘다
@@ -626,25 +435,23 @@ class Browser:
                 pass
             for channel in self._bg_channels():
                 try:
-                    # 일부 환경에서 --headless가 막히는 경우 일반 창을 화면 밖에 띄운다
-                    self._bg = self._pw.chromium.launch(channel=channel, headless=False, args=BG_ARGS)
-                    self.bg_ctx = self._bg.new_context(user_agent=ua, locale=lang, color_scheme="null")
+                    self._bg = self._launch_background(channel)
+                    self.bg_ctx = self._bg.new_context(user_agent=ua, locale=lang, color_scheme="null",
+                                                       viewport=BG_SIZE)
                     self.bg_channel = channel
                     break
-                except Exception:
+                except Exception as e:
+                    reason = (str(e).splitlines() or [""])[0].replace(str(self._bg_profile), "<profile>")[:120]
+                    stage = "CDP/context" if self._bg is not None else "launch"
+                    print(f"[경고] 백그라운드 {channel} {stage} 실패: {type(e).__name__}: {reason}", file=sys.stderr)
                     self._close_bg()
                     if not hasattr(self, "_bg_failed"):
                         self._bg_failed = set()
                     self._bg_failed.add(channel)
             if self.bg_ctx is None:
                 return None
-            self._bg_pid = self._browser_pid(self._bg)
-            if self._bg_pid is None and self._win.ok:
-                print("[경고] 백그라운드 브라우저 프로세스를 찾지 못해 창을 숨기지 못할 수 있습니다", file=sys.stderr)
             self.bg_ctx.on("page", self._adopt_popup)
             self.bg_ctx.add_init_script(_TAB_POPUP_JS)
-            # new_page는 새 창으로 뜬다 — page 이벤트에서 숨기고 포커스를 돌려준다
-            self.bg_ctx.on("page", lambda _p: self._hide_bg())
         # 사용자 브라우저의 로그인 쿠키를 매번 동기화한다 (사용자가 방금 로그인했을 수 있다)
         try:
             cookies = self.ctx.cookies()
@@ -661,28 +468,99 @@ class Browser:
         alive = self._bg_pages()
         if alive and not fresh:
             return alive[-1]
-        self._bg_fg = prev if prev is not None else self._win.foreground()
-        return self.bg_ctx.new_page()  # 비영속 컨텍스트의 새 탭은 새 창으로 뜬다(page 이벤트가 숨김)
+        return self.bg_ctx.new_page()
 
     @staticmethod
-    def _browser_pid(browser):
-        """CDP SystemInfo로 브라우저 프로세스 id를 읽는다. 실패하면 None."""
-        try:
-            cs = browser.new_browser_cdp_session()
+    def _browser_executable(channel):
+        """Find an installed stable Edge/Chrome executable without downloading one."""
+        if channel not in ("msedge", "chrome"):
+            raise ValueError(f"지원하지 않는 브라우저 채널: {channel}")
+        candidates = []
+        if sys.platform == "win32":
+            app = "msedge.exe" if channel == "msedge" else "chrome.exe"
             try:
-                info = cs.send("SystemInfo.getProcessInfo")
-            finally:
-                cs.detach()
-            return next((p["id"] for p in info.get("processInfo", []) if p.get("type") == "browser"), None)
-        except Exception:
-            return None
+                import winreg
+                for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                    for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+                        try:
+                            key = winreg.OpenKey(hive, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{app}",
+                                                 0, winreg.KEY_READ | view)
+                            with key:
+                                candidates.append(winreg.QueryValue(key, None))
+                        except OSError:
+                            pass
+            except ImportError:
+                pass
+            roots = [os.environ.get("PROGRAMFILES(X86)"), os.environ.get("PROGRAMFILES"),
+                     os.environ.get("LOCALAPPDATA")]
+            vendor = r"Microsoft\Edge\Application" if channel == "msedge" else r"Google\Chrome\Application"
+            candidates.extend(str(Path(root) / vendor / app) for root in roots if root)
+        elif sys.platform == "darwin":
+            app = ("Microsoft Edge.app/Contents/MacOS/Microsoft Edge" if channel == "msedge"
+                   else "Google Chrome.app/Contents/MacOS/Google Chrome")
+            candidates.extend((f"/Applications/{app}", str(Path.home() / "Applications" / app)))
+        else:
+            names = ("microsoft-edge", "microsoft-edge-stable", "msedge") if channel == "msedge" else ("google-chrome", "google-chrome-stable", "chrome")
+            candidates.extend(shutil.which(name) for name in names)
+        return next((str(Path(p)) for p in candidates if p and Path(p).is_file()), None)
 
-    def _hide_bg(self):
-        """백그라운드 창을 화면 밖·작업표시줄 밖으로 보내고 포커스를 창이 뜨기 전 창으로 돌린다."""
+    def _launch_background(self, channel):
+        exe = self._browser_executable(channel)
+        if not exe:
+            raise FileNotFoundError(f"설치된 {channel} 실행 파일을 찾지 못했습니다")
+        profile = Path(tempfile.mkdtemp(prefix="nongside-bg-")).resolve()
+        self._bg_profile = profile
+        self._bg_executable = exe
         try:
-            self._win.hide(self._bg_pid, self._bg_fg)
+            args = [exe, "--headless=new", "--remote-debugging-port=0",
+                    "--remote-debugging-address=127.0.0.1", f"--user-data-dir={profile}",
+                    "--window-size=1280,900", "--no-first-run", "--no-default-browser-check",
+                    "--disable-background-networking", "--disable-component-update", "--no-service-autorun",
+                    "--enable-automation", "--password-store=basic"]
+            if sys.platform == "darwin":
+                args.append("--use-mock-keychain")
+            proc = subprocess.Popen(args,
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    **({"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}))
+            self._bg_process = proc
+            active = profile / "DevToolsActivePort"
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if proc.poll() not in (None, 0):
+                    raise RuntimeError(f"{channel} 종료 코드 {proc.returncode}")
+                try:
+                    lines = active.read_text(encoding="utf-8").splitlines()
+                    port = int(lines[0])
+                    if not 1 <= port <= 65535:
+                        raise ValueError("invalid debugging port")
+                    if len(lines) < 2 or not re.fullmatch(r"/devtools/browser/[0-9a-fA-F-]{36}", lines[1]):
+                        raise ValueError("invalid browser websocket path")
+                    endpoint = f"ws://127.0.0.1:{port}{lines[1]}"
+                    try:
+                        browser = self._pw.chromium.connect_over_cdp(
+                            endpoint, timeout=max(1, int((deadline - time.monotonic()) * 1000)))
+                    except Exception:
+                        if time.monotonic() < deadline:
+                            time.sleep(0.1)
+                            continue
+                        raise
+                    self._bg = browser
+                    session = browser.new_browser_cdp_session()
+                    try:
+                        self._bg_pid = next((p["id"] for p in session.send("SystemInfo.getProcessInfo").get("processInfo", [])
+                                             if p.get("type") == "browser"), None)
+                    finally:
+                        session.detach()
+                    if self._bg_pid is None:
+                        browser.close()
+                        raise RuntimeError("CDP에서 브라우저 프로세스 소유권 확인 실패")
+                    return browser
+                except (OSError, ValueError, IndexError):
+                    time.sleep(0.1)
+            raise TimeoutError(f"{channel} CDP 포트 준비 시간 초과")
         except Exception:
-            pass
+            self._close_bg()
+            raise
 
     def site_names(self, url):
         """url 사이트의 이름 후보 (지금 제목, 홈(/) 제목, 메타 사이트 이름). 지금 탭이 그 호스트가 아니면 빈 값."""
@@ -730,18 +608,141 @@ class Browser:
         return True
 
     def prepare_background(self):
-        """챗 UI를 띄울 때 백그라운드 창을 미리 띄워 둔다. 대화 중에 창이 뜨며 포커스를 뺏지 않게 한다."""
+        """챗 UI를 띄울 때 headless 백그라운드 브라우저를 미리 준비한다."""
         if background_enabled() and self.bg_ctx is None:
             self._bg_page(fresh=False)
 
     def _close_bg(self):
-        for obj in (self.bg_ctx, self._bg):
+        profile_live = False
+        try:
+            if self.bg_ctx is not None:
+                try:
+                    self.bg_ctx.close()
+                except Exception:
+                    pass
+            if self._bg is not None:
+                try:
+                    session = self._bg.new_browser_cdp_session()
+                    try:
+                        session.send("Browser.close")
+                    finally:
+                        session.detach()
+                except Exception:
+                    try:
+                        self._bg.close()
+                    except Exception:
+                        pass
+            proc = self._bg_process
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.wait(timeout=2)
+                    except (OSError, subprocess.SubprocessError) as e:
+                        print(f"[경고] 백그라운드 프로세스 종료 실패: {type(e).__name__}", file=sys.stderr)
+            # The Windows launcher may exit after handing off to Edge; the profile identifies only our child.
+            if self._bg_profile is not None:
+                deadline = time.monotonic() + 3
+                scan = self._profile_process_ids()
+                while scan and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    scan = self._profile_process_ids()
+                if scan is None:
+                    profile_live = True
+                    print("[경고] 백그라운드 프로세스 확인 실패; 임시 프로필을 보존합니다", file=sys.stderr)
+                elif scan:
+                    self._kill_bg_processes(set(scan))
+                    deadline = time.monotonic() + 2
+                    scan = self._profile_process_ids()
+                    while scan and time.monotonic() < deadline:
+                        time.sleep(0.1)
+                        scan = self._profile_process_ids()
+                    profile_live = scan is None or bool(scan)
+                else:
+                    profile_live = False
+        finally:
+            profile, self._bg_profile = self._bg_profile, None
+            if profile is not None:
+                try:
+                    resolved = profile.resolve()
+                    if profile_live:
+                        print(f"[경고] 백그라운드 프로세스가 남아 있어 임시 프로필을 보존했습니다: {resolved}", file=sys.stderr)
+                    elif resolved.parent == Path(tempfile.gettempdir()).resolve() and resolved.name.startswith("nongside-bg-"):
+                        shutil.rmtree(resolved)
+                except OSError as e:
+                    print(f"[경고] 백그라운드 프로필 정리 실패: {type(e).__name__}", file=sys.stderr)
+            self._bg = self.bg_ctx = self._bg_process = None
+            self._bg_pid = None
+            self._bg_executable = None
+
+    def _profile_process_ids(self):
+        profile = self._bg_profile
+        if profile is None:
+            return []
+        if sys.platform == "win32":
+            env = os.environ.copy()
+            env["NONGSIDE_PROFILE_PATH"] = str(profile)
+            env["NONGSIDE_BROWSER_NAME"] = Path(self._bg_executable or "").name.casefold()
+            script = r"""$ErrorActionPreference = 'Stop'
+$profilePattern = [regex]::Escape($env:NONGSIDE_PROFILE_PATH)
+$pattern = '(?i)(?:^|\s)"?--user-data-dir="?' + $profilePattern + '"?(?=\s|$)'
+Get-CimInstance Win32_Process | Where-Object { $_.Name -and
+    $_.Name.Equals($env:NONGSIDE_BROWSER_NAME, [StringComparison]::OrdinalIgnoreCase) -and
+    $_.CommandLine -and $_.CommandLine -match $pattern } | ForEach-Object { $_.ProcessId }
+"""
             try:
-                if obj is not None:
-                    obj.close()
-            except Exception:
-                pass
-        self._bg = self.bg_ctx = self._bg_pid = None
+                result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                                        capture_output=True, text=True, timeout=3, env=env,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
+                if result.returncode:
+                    return None
+                out = result.stdout
+                return [int(line) for line in out.splitlines() if line.strip().isdigit()]
+            except (OSError, subprocess.SubprocessError):
+                return None
+        found = []
+        proc_root = Path("/proc")
+        if proc_root.is_dir():
+            try:
+                entries = list(proc_root.iterdir())
+                for entry in entries:
+                    if entry.name.isdigit():
+                        try:
+                            args = [arg.decode(errors="replace") for arg in entry.joinpath("cmdline").read_bytes().split(b"\0")]
+                            if any(arg == f"--user-data-dir={profile}" for arg in args):
+                                found.append(int(entry.name))
+                        except FileNotFoundError:
+                            pass
+                        except OSError:
+                            return None
+            except OSError:
+                return None
+            return found
+        try:
+            result = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=3)
+            if result.returncode:
+                return None
+            out = result.stdout
+            for line in out.splitlines():
+                pid, _, command = line.strip().partition(" ")
+                if pid.isdigit() and f"--user-data-dir={profile}" in command:
+                    found.append(int(pid))
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return found
+
+    def _kill_bg_processes(self, pids):
+        own_pid = os.getpid()
+        for pid in pids - {own_pid}:
+            try:
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                else:
+                    os.kill(pid, 9)
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"[경고] 백그라운드 PID {pid} 종료 실패: {type(e).__name__}", file=sys.stderr)
 
     def _first_tab(self):
         """탭을 묻지 않을 때의 시작 탭. 탭이 없으면 _pick_tab처럼 새 창을 연다."""

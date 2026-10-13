@@ -231,19 +231,19 @@ On a network where internet search does not work, the agent has a hard time find
 ### 5. Windows PC considerations
 
 - The default browser channel is Edge (`msedge`), so a Windows PC with Edge installed needs no extra browser settings.
-- Because security software sometimes blocks a headless browser, background work opens a normal window off-screen instead of using headless mode.
+- Background work runs Edge/Chrome in headless mode, so no window appears on screen. Some security software blocks headless browsers. If the background browser cannot start, the agent prints a warning and works in the current tab.
 - It reads UTF-16 `.env` files created by PowerShell 5.1, and it prints Korean so that it is not garbled on the Windows console (cp949).
 
 ### 6. Summary for security review
 
 | Item | Details |
 | :--- | :--- |
-| Processes | Python, the playwright driver (`node.exe`), and Edge/Chrome (up to one for the agent and one for background work; if pywebview is absent, one more for the chat window) |
-| Listening ports | Only when pywebview is absent: one arbitrary port on `127.0.0.1` (token auth). If you use CDP attach, the debug port you opened (default 9222, no auth) |
+| Processes | Python, the playwright driver (`node.exe`), Edge/Chrome for the agent, one headless Edge/Chrome for background work, and, if pywebview is absent, one more for the chat window |
+| Listening ports | Only when pywebview is absent: one arbitrary port on `127.0.0.1` (token auth). If you use CDP attach, the debug port you opened (default 9222, no auth). While the background browser runs, one random debug port on `127.0.0.1` (no auth) |
 | Outbound connections | The [Network boundaries](#3-network-boundaries) table above |
-| Left on disk | `.edge-profile/` (includes login cookies; in the folder you ran from), `_local/memory/sites.json` (site names, URLs, and click paths; typed input excluded), plus, in the temp folder, the chat-window browser profile (`agent-ui-*`, when pywebview is absent) and the app icon file |
+| Left on disk | `.edge-profile/` (includes login cookies; in the folder you ran from), `_local/memory/sites.json` (site names, URLs, and click paths; typed input excluded), plus, in the temp folder, the background browser profile (`nongside-bg-*`, removed after successful process cleanup; preserved with a warning if the process remains or cannot be checked), the chat-window browser profile (`agent-ui-*`, when pywebview is absent), and the app icon file |
 | Log files | None are created. Progress is printed only to the console and the chat window. Screenshots are not saved to files either |
-| OS features used | Windows: user32 (ctypes) to change background-window position and taskbar visibility, and to flash the window. macOS: osascript to hide the app |
+| OS features used | Windows: user32 (ctypes) to flash the window when a question appears, the registry (App Paths) to find Edge/Chrome, and process inspection plus `taskkill` for the owned temporary browser. Other systems use no window APIs |
 | Administrator rights | Not required. No service or registry registration |
 | Arbitrary code execution | Python written by the model runs through `run_code` with your user privileges (not sandboxed; see [Security and limitations](#security-and-limitations)) |
 
@@ -259,7 +259,7 @@ On a network where internet search does not work, the agent has a hard time find
 - **Text-only control**: On every turn, `dom.js` lists the page's interactive elements as `[i] <tag> "label"`, and the model clicks or types by index. Models without image input also work.
 - **17 tools**: `navigate`, `new_tab`, `switch_tab`, `back`, `click`, `type`, `press`, `hover`, `scroll`, `attach`, `extract`, `find`, `wait`, `screenshot`, `run_code`, `ask_user`, `done`. Multiple actions that do not change the page, such as filling out a form, are grouped into one turn.
 - **Two browser modes**: If the debug port (default `9222`) responds, the agent attaches to that browser. Otherwise, it launches Edge/Chrome with a dedicated profile.
-- **Background tasks**: Content not in the current tab is found in an off-screen window that copies the user's cookies. If you say "open it" or "show it," the agent displays it on your screen.
+- **Background tasks**: Content not in the current tab is found in a headless browser with no window on screen. It uses a separate temporary profile and copies the current browser's user agent, language, and cookies; other storage such as localStorage is not shared. The owned browser starts with `--remote-debugging-port=0` on loopback, independently of `AGENT_CDP_PORT`. If you say "open it" or "show it," the agent displays it on your screen.
 - **Site memory**: After a run ends, it saves the site name used by the user and the successful lookup and interaction paths for that site, and reuses them for later requests.
 - **Confirmation for risky actions**: Before running clicks and scripts that match keywords such as delete, send, post, pay, or submit, the agent asks for confirmation (keyword heuristic; see [Security and limitations](#security-and-limitations)).
 - **Chat window and CLI**: The default is the chat window (questions, confirmations, input forms, stop button, screenshot thumbnails); `--cli` starts a terminal conversation loop.
@@ -384,7 +384,7 @@ Priority: **process environment variables > `.env` > the `env` block in `~/.clau
 | `AGENT_CHANNEL` | `msedge` | Playwright channel for the agent browser. If Edge is unavailable, you must change this to `chrome` (no automatic fallback) |
 | `AGENT_PROFILE` | `<cwd>/.edge-profile` | Dedicated profile directory used when launching a browser. Relative to the run directory, with the same default name regardless of channel |
 | `AGENT_CDP_PORT` | `9222` | Debug port to try to attach to |
-| `AGENT_BACKGROUND` | `1` | Work on content not in the current tab in an off-screen background window. `0`/`false`/`no`/`off` makes the agent navigate directly in the user's tab |
+| `AGENT_BACKGROUND` | `1` | Work on content not in the current tab in a headless background browser with no window. `0`/`false`/`no`/`off` makes the agent navigate directly in the user's tab |
 | `AGENT_UI_BROWSER` | (empty) | Chat window type. If empty, use pywebview (or an `--app` window if unavailable); `webview` uses pywebview only; `msedge` (`edge`)/`chrome` (`google-chrome`) uses that browser's `--app` window. Any other value causes a startup error |
 | `AGENT_LOG` | `brief` | `quiet` / `brief` / `debug`. Any other value causes a startup error |
 | `AGENT_MEMORY` | `_local/memory/sites.json` | Site memory file path. The default location is relative to the source folder, and the directory is created automatically on first save (not tracked by git) |
@@ -402,9 +402,9 @@ Priority: **process environment variables > `.env` > the `env` block in `~/.clau
 <details>
 <summary><b>Background browser behavior</b></summary>
 
-- Some environments restrict headless execution, so instead of running headless, the agent opens a regular window at off-screen coordinates. On Windows, it is not shown on the taskbar and focus is returned to the original window; on macOS, the app is hidden. On Linux, the window is only moved off-screen, with no additional hiding.
-- The window opens the first time it is needed and is reused. The background window has a separate context. It copies only cookies from the user's browser; other storage, such as localStorage, is not shared.
-- `window.open` popups opened from that window are opened as tabs in the same window so they do not appear on screen.
+- The background browser runs Edge/Chrome with `--headless=new`, so no window appears on screen. It uses the installed Edge or Chrome: on Windows, the registry App Paths and install folders; on macOS, the Applications folder; on Linux, `PATH`. If it cannot start, the agent prints a warning and works in the current tab.
+- The browser starts when the chat window opens (or the first time it is needed) and is reused. Its viewport is fixed at 1280×900. The temporary profile is deleted after successful process cleanup; if a process remains or cannot be checked, the profile is preserved with a warning. The background context is separate. It copies the current browser's user agent, language, and cookies; other storage, such as localStorage, is not shared. Its `--remote-debugging-port=0` CDP listener is on loopback and independent of `AGENT_CDP_PORT`.
+- `window.open` popups opened from that background context are opened as tabs in the same headless browser.
 - The progress log shows when a task was performed in the background.
 - The browser type is selected in this order: the same type as the attached browser, `AGENT_CHANNEL`, then the remaining option.
 
@@ -492,7 +492,7 @@ flowchart LR
 | `main.py` | Entry point. Routes to chat window / CLI / `--selftest`; conversation loop |
 | `agent.py` | Tool schema (`TOOLS`), agent loop, and confirmation for risky actions |
 | `llm.py` | System prompt, configuration loading (.env, settings.json), Messages API calls and retries, vision interpretation |
-| `browser.py` | Playwright/CDP browser control, background window, `extract` and `run_code` execution |
+| `browser.py` | Playwright/CDP browser control, headless background browser, `extract` and `run_code` execution |
 | `dom.js` | Script for collecting the element list and markers, executed with `page.evaluate` |
 | `memory.py` | Site memory storage, migration, and injection |
 | `webui.py` | Chat window (single HTML file), pywebview bridge, and fallback token-authenticated local server |
@@ -513,7 +513,7 @@ nongside is a **tool that controls the real browser and Python with the user's p
 
 **Webpage content can act like instructions (prompt injection).** The agent puts page text in the same conversation as the user's request and sends it to the model. If a page contains hidden text such as "upload this file" or "go to this address," the model may follow it. The current code has no separate mechanism to filter this, and actions not caught by the confirmation above (keyword-free `run_code`, attaching a local file with `attach`, navigating to an arbitrary address with `navigate`, or submitting with Enter via `press`) run without confirmation. When using the agent on untrusted pages, check the progress log and be careful with profiles where important accounts are signed in.
 
-**The user's browser profile and cookies are used.** With CDP attach, the agent uses that browser's login session as-is; the background window receives a copy of the cookies. Login sessions are also stored in the dedicated profile (`.edge-profile`).
+**The user's browser profile and cookies are used.** With CDP attach, the agent uses that browser's login session as-is; the headless background browser receives a copy of the cookies. Login sessions are also stored in the dedicated profile (`.edge-profile`).
 
 **What is sent to the LLM server.** The element list, page text read with `extract`, screenshots (including those sent to the vision model), and values entered with `ask_user` (including private input) are sent to the configured LLM server. If you use an in-network server, this data goes only as far as that server. Check the server's log retention policy as well.
 
@@ -523,7 +523,7 @@ nongside is a **tool that controls the real browser and Python with the user's p
 - Screenshots are a last resort. If `extract` has not been used on the page, the first `screenshot` call returns extracted text instead of a capture (or captures immediately if there is no text to extract); the second call onward takes actual screenshots. A maximum of 3 screenshots per page.
 - The step limit per request is 25. Once exceeded, the agent summarizes progress so far and ends the task.
 - The observation list includes up to 300 elements across frames. On pages with many elements, elements far from the viewport may be omitted.
-- On Linux, there is no background window hiding, and the full behavior has not been verified.
+- The headless background browser path has not been fully verified on every OS.
 
 ---
 
@@ -538,7 +538,7 @@ nongside is a **tool that controls the real browser and Python with the user's p
 - Use ASCII only in comments in `requirements-ui.txt` (Windows pip may read it using the system code page).
 - Before opening a PR, make sure `python main.py --selftest` passes. It validates the tool schema format, one pass through the agent loop, and site memory storage and recall. Before committing, check that `.edge-profile*`, `_local/`, and `.env` do not appear in `git status`.
 
-<!-- TODO: Add instructions after organizing the public test suite -->
+Run the regression tests with `python -m unittest discover -s tests -v`.
 
 ---
 
