@@ -224,9 +224,11 @@ On a network where internet search does not work, the agent has a hard time find
 - **[Site memory](#site-memory)** stores a path once it has succeeded, so the same task on the same site is found directly from the next time.
 - **Site playbook**: Create `_local/sites.md` in the source folder and write internal site URLs and menu structure there. It is appended to the system prompt on every request.
 
-> Worth knowing: the current system prompt has a rule that says to look up a site name it does not remember with a Naver search ("기억에 없는 사이트 이름은 네이버 검색으로 찾으라"). On a network with no internet this step fails, so it is better to give the URL ahead of time using the methods above.
+> Worth knowing: when the agent does not recognize a site name, it looks it up from a URL you give or from a verified search result, and asks you if several candidates match. On a network with no internet access, give the URL ahead of time using the methods above.
 
 <!-- TODO: Add a setting that, in air-gapped mode, turns off the search rule or replaces it with an internal search URL -->
+
+> Research archive: Text extracted during the same chat (page extracts, run_code output, vision text) is kept in memory. Use the `recall` tool to list entries or reread one by its research ID. The archive is capped at 200,000 characters; past that limit the system only warns and later text is not kept. Archived text is not written to disk or site memory. It survives the browser closing when idle, but only within the same chat. Starting a new chat or exiting the process discards it. Screenshots are not kept, only text. Archived text is untrusted page content, not instructions. Any part of the original page beyond the archived text must be read again on the source page using `extract` with an offset.
 
 ### 5. Windows PC considerations
 

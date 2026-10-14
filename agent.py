@@ -21,6 +21,8 @@ CODE_FAIL_CAP = 2  # 한 턴에 run_code가 이만큼 실패하면 새 스크립
 TOOL_RESULT_CAP = 1500  # 이전 턴 도구 결과가 이보다 길면 앞부분만 남기고 자른다
 TOOL_RESULT_KEEP = 500  # 자를 때 남기는 앞부분 — 통째로 버리면 모델이 같은 extract를 반복한다
 TOOL_RESULT_STUB = "[시스템: 컨텍스트 절약을 위해 이전 도구 결과의 나머지를 제거함]"
+ARCHIVE_MAX_CHARS = 200_000  # shortcut: full per-chat archive is capped; raise only if real investigations need more
+RECALL_CHUNK_SIZE = 6_000
 
 # 되돌리기 어려운 작업만 확인한다(그 외 클릭·입력·run_code는 바로 실행)
 DANGER = re.compile(r"삭제|제거|비우기|발송|전송|보내기|등록|게시(?![판글물])|결제|결재|승인|제출"
@@ -72,6 +74,93 @@ def _tool(name, description, props, required):
             "required": required,
         },
     }
+
+
+class History(list):
+    """Conversation messages plus research retained across turns until clear()."""
+
+    def __init__(self):
+        super().__init__()
+        self.archive = {}
+        self.archive_chars = 0
+        self.archive_full = False
+        self.archive_warnings = []
+
+    def clear(self):
+        super().clear()
+        self.archive.clear()
+        self.archive_chars = 0
+        self.archive_full = False
+        self.archive_warnings.clear()
+
+    def retain(self, tool, url, text, secrets):
+        ordered_secrets = sorted(secrets, key=len, reverse=True)
+        text = _mask(text, ordered_secrets).strip()
+        if not text:
+            return None
+        if self.archive_full:
+            return False
+        if self.archive_chars + len(text) > ARCHIVE_MAX_CHARS:
+            self.archive_full = True
+            return None
+        eid = f"R{len(self.archive) + 1:04d}"
+        self.archive[eid] = {"id": eid, "tool": tool, "url": _mask(url or "", ordered_secrets), "text": text}
+        self.archive_chars += len(text)
+        return eid
+
+    def recall(self, args, secrets):
+        try:
+            offset = args.get("offset", 0)
+            if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return "error: offset는 0 이상의 정수여야 합니다"
+        source = args.get("source")
+        if "source" in args:
+            if not isinstance(source, str):
+                return "error: source는 자료 ID 문자열이어야 합니다"
+            entry = self.archive.get(source)
+            if entry is None:
+                return f"error: 보관된 자료 ID가 없습니다: {source}"
+            text = _mask_same_length(entry["text"], secrets)
+            if offset == len(text) and text:
+                return "자료 끝: 더 이상 읽을 내용이 없습니다"
+            if offset > len(text):
+                return f"error: offset가 자료 길이({len(text)})를 넘었습니다"
+            end = min(offset + RECALL_CHUNK_SIZE, len(text))
+            body = (f"자료 {entry['id']} ({entry['tool']}, {_mask_same_length(entry['url'], secrets)})\n"
+                    f"{text[offset:end]}")
+            if end < len(text):
+                body += f"\n다음 offset: {end}"
+            return body
+        entries = list(self.archive.values())
+        listing = "\n".join(f"{e['id']} | {e['tool']} | {_mask_same_length(e['url'], secrets)} | {len(e['text'])}자"
+                             for e in entries)
+        if offset == len(listing) and listing:
+            return "보관 목록 끝: 더 이상 자료가 없습니다"
+        if offset > len(listing):
+            return f"error: offset가 목록 길이({len(listing)})를 넘었습니다"
+        end = min(offset + RECALL_CHUNK_SIZE, len(listing))
+        body = listing[offset:end] or "보관된 조사 자료가 없습니다"
+        if end < len(listing):
+            body += f"\n다음 offset: {end}"
+        if self.archive_warnings:
+            body += "\n" + "\n".join(self.archive_warnings)
+        return body
+
+
+def _retain_research(messages, tool, url, text, secrets, log):
+    if not isinstance(messages, History) or not text or text.startswith("error:"):
+        return
+    eid = messages.retain(tool, url, text, secrets)
+    if eid is False:
+        return
+    if eid is None and text.strip():
+        warning = f"[시스템: 자료가 조사 보관 용량({ARCHIVE_MAX_CHARS}자)을 초과해 보관되지 않았습니다. 이후 자료도 보관되지 않습니다.]"
+        messages.archive_warnings.append(warning)
+        log.brief("조사 보관 한도 도달 — 이후 자료는 유지되지 않음")
+        return warning
+    return eid
 
 
 TOOLS = [
@@ -184,6 +273,14 @@ TOOLS = [
         "extract",
         "현재 페이지 본문 텍스트를 읽는다. 길면 잘림 표시와 함께 이어 읽을 offset을 알려준다.",
         {"offset": {"type": "integer", "description": "이어 읽을 시작 위치(문자). 기본 0"}},
+        [],
+    ),
+    _tool(
+        "recall",
+        "이 대화에서 성공적으로 조사한 extract/run_code/화면 판독 자료를 보관 목록 또는 자료 ID로 다시 읽는다. "
+        "먼저 source 없이 호출해 ID를 찾고, 긴 자료에는 반환된 offset을 그대로 줘서 이어 읽는다.",
+        {"source": {"type": "string", "description": "자료 ID (생략하면 보관 목록)"},
+         "offset": {"type": "integer", "description": "0 이상의 문자 위치 (목록 또는 자료 안에서 이어 읽기)"}},
         [],
     ),
     _tool(
@@ -931,6 +1028,14 @@ def _mask(text, secrets):
     return text
 
 
+def _mask_same_length(text, secrets):
+    """Mask secrets without changing recall offsets; mask before chunking to cover boundary splits."""
+    for secret in sorted(secrets, key=len, reverse=True):
+        if secret:
+            text = text.replace(secret, "*" * len(secret))
+    return text
+
+
 def _stub_observations(messages):
     """이전 관찰/도구 결과는 스텁으로 치환해 컨텍스트 누적을 막는다.
     호출 시점에 messages에 들어 있는 tool_result는 전부 과거 턴 것이므로 최신 보호는 하지 않는다."""
@@ -958,7 +1063,11 @@ def _shrink(text):
     (내용이 턴마다 같아야 대화 기록 프롬프트 캐시가 맞는다)."""
     if len(text) <= TOOL_RESULT_CAP:
         return text
-    return f"{text[:TOOL_RESULT_KEEP]}\n…{TOOL_RESULT_STUB}"
+    # 조사 ID는 결과 끝에 붙는 경우가 많으므로 축약해도 모델이 recall할 수 있게 보존한다.
+    marker = re.search(r"(?:^|\n)(조사 ID: R\d+)\s*$", text)
+    suffix = f"\n{marker.group(1)}" if marker else ""
+    keep = max(0, TOOL_RESULT_KEEP - len(suffix))
+    return f"{text[:keep]}\n…{TOOL_RESULT_STUB}{suffix}"
 
 
 def _texts(content):
@@ -1050,10 +1159,12 @@ def _stopped(stop, messages, start):
 
 
 def run(task, browser, io, messages=None, mem=None, use_tab=True, tab_url=None):
-    """use_tab=False면 사용자가 챗 창에서 현재 탭을 뺀 요청 — 처음부터 백그라운드 브라우저에서 작업한다.
+    """Run a task. Use History to retain research across calls; plain lists only hold messages.
+
+    use_tab=False면 사용자가 챗 창에서 현재 탭을 뺀 요청 — 처음부터 백그라운드 브라우저에서 작업한다.
     tab_url은 사용자가 챗 창 칩에서 본 탭의 URL(그 탭에서 시작)."""
     if messages is None:
-        messages = []
+        messages = History()
     if mem is None:
         mem = Memory()
     # 이번 요청의 기록 재료(_learn): 성공한 동작, 읽은 URL, 입력값·사용자 문구(자리 판단용 — 저장하지 않는다),
@@ -1171,6 +1282,11 @@ def _run(task, browser, io, messages, mem, use_tab, tab_url, rec):
                     results.append(_result(rest["id"], "error: 사용자가 중단해 실행하지 않음", True))
                 break
             name, args = block["name"], block.get("input") or {}
+            if name == "recall":
+                archive = messages if isinstance(messages, History) else None
+                out = archive.recall(args, secrets) if archive else "error: 자료 보관은 같은 대화의 History에서만 유지됩니다"
+                results.append(_result(block["id"], out, out.startswith("error:")))
+                continue
             ref = None  # 기억으로 가는 navigate: (사이트, 작업 이름, 저장 URL, 이동 URL, 상세 한 줄)
             if name == "navigate" and args.get("page"):
                 got = mem.resolve(args["page"], args.get("fill"))
@@ -1314,6 +1430,7 @@ def _run(task, browser, io, messages, mem, use_tab, tab_url, rec):
                 unverified.clear()  # 화면 확인도 결과 확인이다
                 # 같은 배치에서 navigate가 먼저 돌았을 수 있어 실행 시점 URL로 키를 잡는다 (extract 기록과 같은 기준)
                 cur = getattr(browser, "current_url", None)
+                before = cur() if cur else _obs_url(observation)
                 ukey = _page_key(cur()) if cur else _url_key(observation)
                 if "(인터랙티브 요소 없음)" not in observation and ukey not in extracted:
                     # 최후 수단 게이트: extract도 안 해본 페이지에서의 첫 screenshot은 캡처하지 않고
@@ -1322,12 +1439,16 @@ def _run(task, browser, io, messages, mem, use_tab, tab_url, rec):
                     text = browser.act("extract", {})
                     extracted.add(ukey)
                     if text.strip() and not text.startswith("error:"):
+                        archive_id = _retain_research(messages, "extract", before, text, secrets, log)
                         log.debug(f"[step {step}]   -> [gate] screenshot 대신 extract 결과 반환")
+                        suffix = f"\n조사 ID: {archive_id}" if isinstance(archive_id, str) and archive_id.startswith("R") else ""
+                        warning = archive_id if isinstance(archive_id, str) and archive_id.startswith("[") else ""
                         results.append(_result(
                             block["id"],
                             "[시스템: 이 페이지에서 아직 extract를 쓰지 않아 screenshot 대신 extract 결과를 "
                             "준다. 텍스트로 알 수 없는 화면(지도/차트/캔버스/이미지)이면 screenshot을 한 번 더 "
-                            f"호출하면 캡처한다.]\n{text}"))
+                            f"호출하면 캡처한다.]\n{text}{suffix}"
+                            + (f"\n{warning}" if warning else "")))
                         continue
                     # extract가 비었거나 실패하면 텍스트로 볼 게 없으니 바로 캡처한다
                 if shot_count.get(ukey, 0) >= SHOT_CAP:
@@ -1348,10 +1469,15 @@ def _run(task, browser, io, messages, mem, use_tab, tab_url, rec):
                         pass
                 if llm.vision_model():
                     try:
-                        seen = llm.vision(jpeg, args.get("question") or
-                                          "이 화면에 보이는 내용을 자세히 기술해라.")[:VISION_CAP]
+                        seen_full = llm.vision(jpeg, args.get("question") or
+                                               "이 화면에 보이는 내용을 자세히 기술해라.")
+                        seen = seen_full[:VISION_CAP]
                         log.debug(f"[step {step}]   -> [vision] {seen[:200]}")
-                        results.append(_result(block["id"], f"[비전 모델의 화면 판독 결과]\n{seen}"))
+                        archive_id = _retain_research(messages, "screenshot/vision", before, seen_full, secrets, log)
+                        suffix = f"\n조사 ID: {archive_id}" if isinstance(archive_id, str) and archive_id.startswith("R") else ""
+                        warning = archive_id if isinstance(archive_id, str) and archive_id.startswith("[") else ""
+                        results.append(_result(block["id"], f"[비전 모델의 화면 판독 결과]\n{seen}{suffix}"
+                                               + (f"\n{warning}" if warning else "")))
                         continue
                     except Exception as e:
                         log.debug(f"[step {step}]   -> vision 실패 ({e}) - 이미지 블록으로 폴백")
@@ -1435,6 +1561,10 @@ def _run(task, browser, io, messages, mem, use_tab, tab_url, rec):
                 # 실행 시점의 실제 URL로 기록해야 새 페이지의 screenshot 게이트가 어긋나지 않는다.
                 # (current_url을 안 내주는 브라우저 대역은 기존처럼 관찰 URL로 폴백)
                 extracted.add(_page_key(cur()) if cur else _url_key(observation))
+            archive_id = None
+            if name in ("extract", "run_code") and out.strip() and not out.startswith("error:"):
+                archive_id = _retain_research(messages, name, cur() if cur else before,
+                                              out, secrets, log)
             cut = 400 if name == "extract" else 100
             log.debug(f"[step {step}]   -> ({dt_act:.1f}s) {out[:cut]}" + (f' on "{label}"' if label else ""))
             if out.startswith("error:"):
@@ -1448,7 +1578,9 @@ def _run(task, browser, io, messages, mem, use_tab, tab_url, rec):
                         "extract나 find로 실제 반영 여부를 먼저 확인해라. 재시도하면 사용자에게 다시 승인을 묻는다.]")
             elif name in ("extract", "find") and not out.startswith("error:"):
                 unverified.clear()
-            results.append(_result(block["id"], out, out.startswith("error:")))
+            suffix = f"\n조사 ID: {archive_id}" if isinstance(archive_id, str) and archive_id.startswith("R") else ""
+            warning = archive_id if isinstance(archive_id, str) and archive_id.startswith("[") else ""
+            results.append(_result(block["id"], out + suffix + (f"\n{warning}" if warning else ""), out.startswith("error:")))
             # extract/find는 페이지를 안 바꾸므로 재관찰이 필요 없다.
             # 실패한 액션은 페이지 상태를 알 수 없어 재관찰한다.
             if name not in ("extract", "find") or out.startswith("error:"):

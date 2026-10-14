@@ -184,7 +184,7 @@ def _is_exit(text):
 def chat_loop(browser, io, first_message=None):
     """브라우저 위에서 돌아가는 대화 루프. 프로그램의 기본 인터페이스."""
     io.say("준비됐습니다. 대화를 시작하세요 (종료: exit, 현재 탭 없이 백그라운드에서: /bg 작업)")
-    messages = []
+    messages = agent.History()
     pending = first_message
     while True:
         if pending is not None:
@@ -210,7 +210,7 @@ def chat_loop(browser, io, first_message=None):
 
 def _task_loop(browser, io, alive, idle):
     """UI에서 들어온 작업을 차례로 실행한다. alive()가 False가 되면 끝난다."""
-    messages = []
+    messages = agent.History()
     last_task = [time.monotonic()]
     tab_info = getattr(browser, "tab_info", None)
     last = [0.0]

@@ -84,7 +84,8 @@ def _kill_on_exit_job(proc):
         if not job:
             raise OSError(ctypes.get_last_error(), "CreateJobObjectW")
         limits = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        limits.BasicLimitInformation.LimitFlags = 0x2000 | 0x800
+        # KILL_ON_JOB_CLOSE(0x2000)만 둔다 — BREAKAWAY_OK(0x800)는 자식이 job을 빠져나가 정리 보증을 약화시킨다
+        limits.BasicLimitInformation.LimitFlags = 0x2000
         if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
             raise OSError(ctypes.get_last_error(), "SetInformationJobObject")
         if not kernel32.AssignProcessToJobObject(job, int(proc._handle)):

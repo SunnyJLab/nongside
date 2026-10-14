@@ -4,7 +4,7 @@ import ctypes
 import os
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -391,7 +391,7 @@ class OwnedBackgroundLaunchTests(unittest.TestCase):
         self.assertEqual(proc.wait.call_count, 2)
 
     def test_profile_process_scan_requires_exact_macos_user_data_dir_token(self):
-        profile = Path("/tmp/nongside-bg-target")
+        profile = PurePosixPath("/tmp/nongside-bg-target")
         output = ("101 /Chrome --user-data-dir=/tmp/nongside-bg-target\n"
                   "102 /Chrome --user-data-dir=/tmp/nongside-bg-target-decoy\n"
                   "103 /Chrome --user-data-dir=/tmp/nongside-bg-target-extra\n")
