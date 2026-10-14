@@ -660,6 +660,21 @@ class OwnedBackgroundLaunchTests(unittest.TestCase):
             self.assertIsNone(browser._kill_on_exit_job(_FakeProcess()))
         windll.assert_not_called()
 
+    def test_kill_on_exit_job_sets_only_kill_on_job_close(self):
+        kernel = Mock()
+        kernel.CreateJobObjectW.return_value = 123
+        kernel.SetInformationJobObject.side_effect = lambda _job, _class, info, _size: (
+            setattr(kernel, "limit_flags", info._obj.BasicLimitInformation.LimitFlags) or 1
+        )
+        proc = _FakeProcess()
+        proc._handle = 456
+        with patch.object(browser.sys, "platform", "win32"), patch.object(
+            browser.ctypes, "WinDLL", return_value=kernel, create=True
+        ):
+            self.assertEqual(browser._kill_on_exit_job(proc), 123)
+        self.assertEqual(kernel.limit_flags, 0x2000)
+        self.assertFalse(kernel.limit_flags & 0x800)
+
 
 if __name__ == "__main__":
     unittest.main()

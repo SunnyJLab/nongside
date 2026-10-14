@@ -261,7 +261,7 @@ python -m venv .venv
 ## 주요 기능
 
 - **텍스트만으로 조작**: 매 턴 `dom.js`가 페이지의 인터랙티브 요소를 `[i] <tag> "라벨"` 목록으로 정리하고, 모델은 인덱스로 클릭·입력합니다. 이미지 입력이 없는 모델도 동작합니다.
-- **17개 도구**: `navigate`, `new_tab`, `switch_tab`, `back`, `click`, `type`, `press`, `hover`, `scroll`, `attach`, `extract`, `find`, `wait`, `screenshot`, `run_code`, `ask_user`, `done`. 폼 입력처럼 페이지가 바뀌지 않는 연속 동작은 한 턴에 여러 도구를 묶어 호출합니다.
+- **18개 도구**: `navigate`, `new_tab`, `switch_tab`, `back`, `click`, `type`, `press`, `hover`, `scroll`, `attach`, `extract`, `find`, `wait`, `screenshot`, `recall`, `run_code`, `ask_user`, `done`. 폼 입력처럼 페이지가 바뀌지 않는 연속 동작은 한 턴에 여러 도구를 묶어 호출합니다.
 - **두 가지 브라우저 모드**: 디버그 포트(기본 `9222`)가 응답하면 그 브라우저에 attach하고, 없으면 전용 프로필로 Edge/Chrome을 띄웁니다.
 - **백그라운드 작업**: 현재 탭에 없는 내용은 화면에 창이 없는 헤드리스 브라우저에서 찾습니다. 별도 임시 프로필을 쓰고 현재 브라우저의 user agent, 언어, 쿠키를 복사합니다(쿠키는 실제 백그라운드 작업을 할 때만 복사). localStorage 같은 다른 저장소는 공유하지 않습니다. 채팅 창에서는 10분 동안 작업이 없으면 브라우저를 닫습니다. 이 브라우저의 `--remote-debugging-port=0` 포트는 loopback에만 열리며 `AGENT_CDP_PORT`와 별개입니다. "열어줘", "보여줘"라고 하면 사용자 화면에 띄웁니다.
 - **사이트 메모리**: 사용자가 부르는 사이트 이름과, 그 사이트에서 성공한 조회·조작 경로를 실행이 끝난 뒤에도 저장해 다음 요청에 재사용합니다.

@@ -83,11 +83,15 @@ class ResearchRetentionTests(unittest.TestCase):
             return agent.run(task, browser, io, messages, mem=self.mem)
 
     def test_default_messages_are_history_inside_run(self):
+        seen = []
+
         def chat(messages, _tools):
-            self.assertIsInstance(messages, agent.History)
+            seen.append(messages)
             return _response(("done", {"summary": "done"}),)
 
-        self._run("기록 확인", _Browser(), _IO(), None, chat)
+        result = self._run("기록 확인", _Browser(), _IO(), None, chat)
+        self.assertEqual(result, "done")
+        self.assertIsInstance(seen[0], agent.History)
 
     def test_tail_survives_compaction_for_followup_recall_in_same_history(self):
         browser, io = _Browser(), _IO()
@@ -112,7 +116,8 @@ class ResearchRetentionTests(unittest.TestCase):
             return _response(("done", {"summary": "자료 수집 완료"}),)
 
         history = agent.History()
-        self._run("수치 수집", browser, io, history, first_chat)
+        result = self._run("수치 수집", browser, io, history, first_chat)
+        self.assertEqual(result, "자료 수집 완료")
 
         recall_calls = []
 
@@ -147,7 +152,9 @@ class ResearchRetentionTests(unittest.TestCase):
                             if isinstance(b, dict) and b.get("type") == "tool_result"]
             self.assertTrue(any(agent.TOOL_RESULT_STUB in result for result in tool_results))
             self.assertTrue(any("조사 ID: R0001" in result for result in tool_results))
-            return _response(("recall", {"source": "R0001"}),)
+            if calls[0] == 3:
+                return _response(("recall", {"source": "R0001"}),)
+            return _response(("done", {"summary": "재확인 완료"}),)
 
         # Make the fallback extract large enough to exercise compaction.
         original_act = browser.act
@@ -158,7 +165,10 @@ class ResearchRetentionTests(unittest.TestCase):
         browser.act = act
         with patch.object(agent.llm, "vision_model", return_value=False), \
                 patch.object(agent.llm, "chat", side_effect=chat):
-            agent.run("차트 확인", browser, io, history, mem=self.mem)
+            first = agent.run("차트 확인", browser, io, history, mem=self.mem)
+            second = agent.run("차트 다시 확인", browser, io, history, mem=self.mem)
+        self.assertEqual(first, "자료 수집 완료")
+        self.assertEqual(second, "재확인 완료")
         self.assertEqual(history.archive["R0001"]["url"], destination)
         self.assertIn("CHART=", history.recall({"source": "R0001"}, set()))
 

@@ -181,6 +181,34 @@ class TaskLoopHistoryTests(unittest.TestCase):
 class LlmBodySerializationTests(unittest.TestCase):
     SECRET = "sk-test-secret-123"
 
+    def test_retain_masks_secrets_before_archiving_text_and_url(self):
+        hist = agent.History()
+        secret = self.SECRET
+        hist.retain("extract", f"https://example.com/{secret}", f"본문 {secret} 끝", {secret})
+        archived = hist.archive["R0001"]
+        self.assertNotIn(secret, archived["text"])
+        self.assertNotIn(secret, archived["url"])
+
+    def test_recall_catalog_paginates_and_reconstructs_full_listing(self):
+        hist = agent.History()
+        for i in range(3):
+            hist.retain("extract", f"https://example.com/{i}/{'x' * 3000}", "본문", set())
+        listing = "\n".join(
+            f"{entry['id']} | {entry['tool']} | {entry['url']} | {len(entry['text'])}자"
+            for entry in hist.archive.values()
+        )
+        first = hist.recall({}, set())
+        marker = "\n다음 offset: "
+        self.assertIn(marker, first)
+        first_chunk, offset_text = first.rsplit(marker, 1)
+        offset = int(offset_text)
+        second = hist.recall({"offset": offset}, set())
+        self.assertEqual(first_chunk + second, listing)
+
+    def test_system_prompt_keeps_recall_and_untrusted_archive_rule(self):
+        self.assertIn("recall", llm.SYSTEM)
+        self.assertIn("신뢰할 수 없는 자료", llm.SYSTEM)
+
     def _serialize(self, messages):
         captured = {}
 
